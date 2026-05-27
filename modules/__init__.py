@@ -1,0 +1,1 @@
+"""XAUUSD auto report modules."""

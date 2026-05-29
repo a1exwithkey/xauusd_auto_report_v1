@@ -1,7 +1,6 @@
 """
 XAUUSD Market Structure Dashboard — Streamlit wrapper.
-Copies the Vite build output to Streamlit's static folder on first run,
-then serves the app inside a full-page iframe.
+Finds the Vite build output and serves it via Streamlit's static folder.
 """
 
 from __future__ import annotations
@@ -11,31 +10,33 @@ from pathlib import Path
 
 import streamlit as st
 
-HERE = Path(__file__).resolve().parent
-# React build output lives inside the xauusd_dashboard subdirectory
-DASHBOARD = HERE / "xauusd_dashboard"
-DIST = DASHBOARD / "dist"
-# Streamlit only serves static files from <project_root>/static/
-STATIC = HERE / "static"
+ROOT = Path(__file__).resolve().parent
+STATIC = ROOT / "static"
+
+# Ordered: first match wins
+CANDIDATES: list[tuple[str, Path]] = [
+    ("xauusd_dashboard/dist", ROOT / "xauusd_dashboard" / "dist"),
+    ("xauusd_dashboard/static", ROOT / "xauusd_dashboard" / "static"),
+    ("dist", ROOT / "dist"),
+    ("static", ROOT / "static"),
+]
 
 
-def _ensure_static() -> None:
-    """Copy dist → static once so Streamlit serves the assets."""
-    if not (DIST / "index.html").exists():
-        return
+def _find_build() -> tuple[Path, Path] | None:
+    """Return (source_dir, index_path) for the first match, or None."""
+    for _label, folder in CANDIDATES:
+        idx = folder / "index.html"
+        if idx.exists():
+            return folder, idx
+    return None
 
-    index_mtime = (DIST / "index.html").stat().st_mtime
-    static_index = STATIC / "index.html"
 
-    if static_index.exists():
-        dest_mtime = static_index.stat().st_mtime
-        if dest_mtime >= index_mtime:
-            return
-
-    # Remove old then copy fresh
+def _sync_to_static(source: Path) -> Path:
+    """Copy source folder contents into STATIC/. Overwrites existing."""
     if STATIC.exists():
-        shutil.rmtree(STATIC)
-    shutil.copytree(DIST, STATIC)
+        shutil.rmtree(STATIC, ignore_errors=True)
+    shutil.copytree(str(source), str(STATIC))
+    return STATIC / "index.html"
 
 
 def main() -> None:
@@ -45,10 +46,33 @@ def main() -> None:
         layout="wide",
     )
 
-    _ensure_static()
+    found = _find_build()
 
-    if not (STATIC / "index.html").exists():
-        st.error("Build output not found. Run `npm run build` inside xauusd_dashboard/ first.")
+    if not found:
+        lines = []
+        for label, folder in CANDIDATES:
+            ok = (folder / "index.html").exists()
+            lines.append(f"{'✅' if ok else '❌'} {label}/index.html")
+        st.error(
+            "**Build output not found.** Checked:\n\n"
+            + "\n".join(lines)
+            + "\n\nRun `npm run build` inside xauusd_dashboard/ first."
+        )
+        st.stop()
+
+    source_dir, source_index = found
+
+    # Streamlit only serves from <repo>/static/ — sync the build there
+    if source_dir != STATIC:
+        target = _sync_to_static(source_dir)
+    else:
+        target = STATIC / "index.html"
+
+    if not target.exists():
+        st.error(
+            f"Sync failed. Source: `{source_dir}/` → Target: `{STATIC}/`.\n"
+            "Check that the build folder is committed to the repo."
+        )
         st.stop()
 
     st.markdown(
@@ -62,7 +86,6 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Streamlit serves files from static/ at /app/static/
     st.components.v1.iframe(
         src="/app/static/index.html",
         height=960,

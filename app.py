@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "641e27f125f3483faea3c356a8b456c2")
+API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
 
 CANDIDATES: list[Path] = [
     ROOT / "xauusd_dashboard" / "dist",
@@ -119,7 +119,12 @@ def _fetch_from_twelvedata() -> dict | None:
         data["High"].append(float(r["high"]))
         data["Low"].append(float(r["low"]))
         data["Close"].append(float(r["close"]))
-        data["Volume"].append(int(r.get("volume", 0) or 0))
+        volume_raw = r.get("volume", 0) or 0
+        try:
+            volume = int(float(volume_raw))
+        except Exception:
+            volume = 0
+        data["Volume"].append(volume)
 
     df = pd.DataFrame(data)
     df["time"] = pd.to_datetime(df["time"])
@@ -131,6 +136,7 @@ def _fetch_from_twelvedata() -> dict | None:
         "data_source": "Twelve Data",
         "candles": candles,
         "rows": len(candles),
+        "close": candles[-1]["close"] if candles else None,
         "latest_close": candles[-1]["close"] if candles else None,
         "latest_time": str(df.index[-1]),
         "is_demo_data": False,
@@ -158,6 +164,7 @@ def _fetch_from_yfinance() -> dict | None:
             "data_source": "Yahoo Finance (fallback)",
             "candles": candles,
             "rows": len(candles),
+            "close": candles[-1]["close"] if candles else None,
             "latest_close": candles[-1]["close"] if candles else None,
             "latest_time": str(df.index[-1]),
             "is_demo_data": False,

@@ -112,17 +112,14 @@ def _fetch_from_twelvedata() -> dict | None:
     # Twelve Data returns newest first — reverse to chronological
     rows.reverse()
 
-    data = {
-        "time": [],
-        "open": [], "high": [], "low": [], "close": [], "volume": [],
-    }
+    data: dict = {"time": [], "Open": [], "High": [], "Low": [], "Close": [], "Volume": []}
     for r in rows:
         data["time"].append(r["datetime"])
-        data["open"].append(float(r["open"]))
-        data["high"].append(float(r["high"]))
-        data["low"].append(float(r["low"]))
-        data["close"].append(float(r["close"]))
-        data["volume"].append(int(r.get("volume", 0) or 0))
+        data["Open"].append(float(r["open"]))
+        data["High"].append(float(r["high"]))
+        data["Low"].append(float(r["low"]))
+        data["Close"].append(float(r["close"]))
+        data["Volume"].append(int(r.get("volume", 0) or 0))
 
     df = pd.DataFrame(data)
     df["time"] = pd.to_datetime(df["time"])

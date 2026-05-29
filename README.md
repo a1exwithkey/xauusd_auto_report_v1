@@ -8,7 +8,7 @@
 
 Streamlit Cloud 已部署：
 
-👉 **[https://xauusd-auto-report.streamlit.app](https://xauusd-auto-report.streamlit.app)**
+👉 **[https://xauusd-auto-report-v1.streamlit.app](https://xauusd-auto-report-v1.streamlit.app)**
 
 ## 本地运行
 

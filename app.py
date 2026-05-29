@@ -1,13 +1,11 @@
 """
 XAUUSD Market Structure Dashboard — Streamlit wrapper.
-Reads the Vite build, inlines all assets as data URLs, renders via st.html.
-No file-serving or iframe src required — works reliably on Streamlit Cloud.
+Rebuilds a clean self-contained HTML from the Vite build output,
+then renders via st.components.v1.html().
 """
 
 from __future__ import annotations
 
-import base64
-import re
 from pathlib import Path
 
 import streamlit as st
@@ -21,39 +19,29 @@ CANDIDATES: list[Path] = [
     ROOT / "static",
 ]
 
+HTML_HEAD = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>XAUUSD Market Structure Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='28' font-size='28'>🟡</text></svg>"/>
+<style>html,body,#root{width:100%;min-height:100vh;margin:0;background:#0a0e14;overflow:auto}</style>
+<style>__CSS_PLACEHOLDER__</style>
+<script>window.onerror=function(m,s,l,c,e){document.body.insertAdjacentHTML('beforeend','<div style=\"position:fixed;top:0;right:0;z-index:99999;max-width:420px;background:#1a0000;color:#f44;font:11px monospace;padding:10px;border:2px solid red\">JS ERROR: '+String(m)+' @ '+String(s)+':'+l+'</div>');};</script>
+</head>
+<body>
+<div id="root"></div>
+<script>__JS_PLACEHOLDER__</script>
+</body>
+</html>"""
+
 
 def _find_build() -> Path | None:
     for folder in CANDIDATES:
         if (folder / "index.html").exists():
             return folder
     return None
-
-
-def _data_url(path: Path, mime: str) -> str:
-    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
-
-
-def _inline_assets(html: str, folder: Path) -> str:
-    """Replace ./assets/*.js and ./assets/*.css references with base64 data URLs."""
-
-    def _replace(m: re.Match) -> str:
-        filename = m.group(1)
-        asset_path = folder / "assets" / filename
-        if not asset_path.exists():
-            # try direct sibling
-            asset_path = folder / filename
-        if not asset_path.exists():
-            return m.group(0)  # keep original
-        if filename.endswith(".js"):
-            return _data_url(asset_path, "application/javascript")
-        return _data_url(asset_path, "text/css")
-
-    html = re.sub(r'src="\./assets/([^"]+\.js)"', _replace, html)
-    html = re.sub(r'href="\./assets/([^"]+\.css)"', _replace, html)
-    # Also handle absolute /assets/ paths
-    html = re.sub(r'src="/assets/([^"]+\.js)"', _replace, html)
-    html = re.sub(r'href="/assets/([^"]+\.css)"', _replace, html)
-    return html
 
 
 def main() -> None:
@@ -70,8 +58,22 @@ def main() -> None:
         st.error("**Build not found.**\n\n" + "\n".join(lines))
         st.stop()
 
-    html = (folder / "index.html").read_text(encoding="utf-8")
-    html = _inline_assets(html, folder)
+    # Find JS and CSS files in assets/
+    assets = folder / "assets"
+    js_files = sorted(assets.glob("index-*.js")) if assets.exists() else []
+    css_files = sorted(assets.glob("index-*.css")) if assets.exists() else []
+
+    if not js_files:
+        st.error(f"No JS bundle found in `{assets}`. Files: {list(assets.iterdir()) if assets.exists() else 'none'}")
+        st.stop()
+
+    # Read JS and CSS
+    js_content = js_files[-1].read_text(encoding="utf-8")
+    css_content = css_files[-1].read_text(encoding="utf-8") if css_files else ""
+
+    # Build self-contained HTML (use replace, not .format(), because JS has {})
+    html = HTML_HEAD.replace("__JS_PLACEHOLDER__", js_content)
+    html = html.replace("__CSS_PLACEHOLDER__", css_content)
 
     st.markdown(
         """
@@ -83,7 +85,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    st.components.v1.html(html, height=1200, scrolling=True)
+    st.components.v1.html(html, height=1800, scrolling=True)
 
 
 if __name__ == "__main__":

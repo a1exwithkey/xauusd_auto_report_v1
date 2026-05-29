@@ -12,7 +12,10 @@ from pathlib import Path
 import streamlit as st
 
 HERE = Path(__file__).resolve().parent
-DIST = HERE / "dist"
+# React build output lives inside the xauusd_dashboard subdirectory
+DASHBOARD = HERE / "xauusd_dashboard"
+DIST = DASHBOARD / "dist"
+# Streamlit only serves static files from <project_root>/static/
 STATIC = HERE / "static"
 
 

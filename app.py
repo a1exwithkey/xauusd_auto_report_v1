@@ -1,16 +1,20 @@
 """
 XAUUSD Market Structure Dashboard — Streamlit wrapper.
-Rebuilds a clean self-contained HTML from the Vite build output.
-Injects real yfinance price data via window.__XAUUSD_REAL_DATA__.
+Primary: Twelve Data XAU/USD spot. Fallback: yfinance GC=F.
+Injects full candles into window.__XAUUSD_REAL_DATA__.
 """
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
+API_KEY = os.getenv("TWELVE_DATA_API_KEY", "641e27f125f3483faea3c356a8b456c2")
 
 CANDIDATES: list[Path] = [
     ROOT / "xauusd_dashboard" / "dist",
@@ -45,29 +49,126 @@ def _find_build() -> Path | None:
     return None
 
 
-def _fetch_real_close() -> dict | None:
-    """Fetch the latest XAUUSD close from yfinance. Returns None on failure."""
+def _rows_to_candles(df: pd.DataFrame) -> list[dict]:
+    candles = []
+    for idx, row in df.iterrows():
+        candles.append({
+            "time": int(pd.Timestamp(idx).timestamp()),
+            "open": round(float(row["Open"]), 2),
+            "high": round(float(row["High"]), 2),
+            "low": round(float(row["Low"]), 2),
+            "close": round(float(row["Close"]), 2),
+            "volume": int(row.get("Volume", 0) or 0),
+        })
+    return candles
+
+
+def _normalize_df(raw: pd.DataFrame) -> pd.DataFrame | None:
+    if raw is None or raw.empty:
+        return None
+    df = raw.copy()
+
+    if isinstance(df.columns, pd.MultiIndex):
+        mapping = {}
+        for col in df.columns:
+            col_str = str(col[0]).strip().title()
+            if col_str in ("Open", "High", "Low", "Close", "Volume"):
+                mapping[col_str] = col
+        df = pd.DataFrame({k: df[v] for k, v in mapping.items() if v is not None}, index=df.index)
+
+    df.columns = [str(c).strip().title() for c in df.columns]
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        if col not in df.columns:
+            df[col] = 0.0 if col == "Volume" else pd.NA
+
+    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    if df.empty:
+        return None
+
+    df["Volume"] = df["Volume"].fillna(0)
+    df.index = pd.to_datetime(df.index)
+    return df
+
+
+def _fetch_from_twelvedata() -> dict | None:
+    """Twelve Data XAU/USD 5min candles."""
+    import urllib.request
+
+    url = (
+        f"https://api.twelvedata.com/time_series"
+        f"?symbol=XAU/USD&interval=5min&outputsize=300"
+        f"&apikey={API_KEY}"
+    )
     try:
-        import yfinance as yf
-        df = yf.download("GC=F", period="1d", interval="5m", auto_adjust=False, progress=False, threads=False)
-        if df.empty:
-            return None
-        close = float(df["Close"].iloc[-1])
-        ts = str(df.index[-1])
-        return {"ticker": "GC=F", "close": close, "time": ts}
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
     except Exception:
         return None
 
+    if body.get("status") == "error" or "values" not in body:
+        return None
+
+    rows = body["values"]
+    # Twelve Data returns newest first — reverse to chronological
+    rows.reverse()
+
+    data = {
+        "time": [],
+        "open": [], "high": [], "low": [], "close": [], "volume": [],
+    }
+    for r in rows:
+        data["time"].append(r["datetime"])
+        data["open"].append(float(r["open"]))
+        data["high"].append(float(r["high"]))
+        data["low"].append(float(r["low"]))
+        data["close"].append(float(r["close"]))
+        data["volume"].append(int(r.get("volume", 0) or 0))
+
+    df = pd.DataFrame(data)
+    df["time"] = pd.to_datetime(df["time"])
+    df = df.set_index("time")
+
+    candles = _rows_to_candles(df)
+    return {
+        "ticker": "XAU/USD",
+        "data_source": "Twelve Data",
+        "candles": candles,
+        "latest_time": str(df.index[-1]),
+        "is_demo_data": False,
+    }
+
+
+def _fetch_from_yfinance() -> dict | None:
+    """Fallback: yfinance GC=F 5min candles."""
+    import yfinance as yf
+
+    for ticker in ("GC=F", "XAUUSD=X"):
+        try:
+            raw = yf.download(ticker, period="5d", interval="5m",
+                              auto_adjust=False, progress=False, threads=False)
+        except Exception:
+            continue
+
+        df = _normalize_df(raw)
+        if df is None:
+            continue
+
+        candles = _rows_to_candles(df)
+        return {
+            "ticker": ticker,
+            "data_source": "Yahoo Finance (fallback)",
+            "candles": candles,
+            "latest_time": str(df.index[-1]),
+            "is_demo_data": False,
+        }
+    return None
+
 
 def main() -> None:
-    st.set_page_config(
-        page_title="XAUUSD Market Structure Dashboard",
-        page_icon="🟡",
-        layout="wide",
-    )
+    st.set_page_config(page_title="XAUUSD Market Structure Dashboard",
+                       page_icon="🟡", layout="wide")
 
     folder = _find_build()
-
     if not folder:
         lines = [f"{'✅' if (f / 'index.html').exists() else '❌'} {f}" for f in CANDIDATES]
         st.error("**Build not found.**\n\n" + "\n".join(lines))
@@ -76,36 +177,36 @@ def main() -> None:
     assets = folder / "assets"
     js_files = sorted(assets.glob("index-*.js")) if assets.exists() else []
     css_files = sorted(assets.glob("index-*.css")) if assets.exists() else []
-
     if not js_files:
-        st.error(f"No JS bundle in `{assets}`. Found: {list(assets.iterdir()) if assets.exists() else 'none'}")
+        st.error(f"No JS bundle in `{assets}`.")
         st.stop()
 
     js_content = js_files[-1].read_text(encoding="utf-8")
     css_content = css_files[-1].read_text(encoding="utf-8") if css_files else ""
 
-    # Try to inject real price data
-    real = _fetch_real_close()
+    # Fetch: Twelve Data → yfinance fallback
+    real = _fetch_from_twelvedata()
+    fallback_reason = ""
+    if not real:
+        fallback_reason = "Twelve Data returned empty/error; "
+        real = _fetch_from_yfinance()
+        if real:
+            fallback_reason += "using Yahoo Finance fallback."
+            real["fallback_reason"] = fallback_reason
+        else:
+            fallback_reason += "Yahoo Finance also failed."
+
     if real:
-        import json
-        inject = f"<script>window.__XAUUSD_REAL_DATA__={json.dumps(real)};</script>"
+        inject = "<script>window.__XAUUSD_REAL_DATA__=" + json.dumps(real, ensure_ascii=False) + ";</script>"
     else:
-        inject = ""
+        # No data at all — inject null so frontend shows error, never mock
+        inject = f"<script>window.__XAUUSD_REAL_DATA__=null;window.__XAUUSD_FALLBACK__={json.dumps(fallback_reason)};</script>"
 
     html = HTML_TPL.replace("__REAL_DATA_SCRIPT__", inject)
     html = html.replace("__JS_PLACEHOLDER__", js_content)
     html = html.replace("__CSS_PLACEHOLDER__", css_content)
 
-    st.markdown(
-        """
-        <style>
-        .stApp { background: #0a0e14; }
-        .block-container { padding: 0 !important; max-width: 100% !important; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    st.markdown("""<style>.stApp{background:#0a0e14}.block-container{padding:0!important;max-width:100%!important}</style>""", unsafe_allow_html=True)
     st.components.v1.html(html, height=1800, scrolling=True)
 
 

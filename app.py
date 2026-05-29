@@ -1,42 +1,59 @@
 """
 XAUUSD Market Structure Dashboard — Streamlit wrapper.
-Finds the Vite build output and serves it via Streamlit's static folder.
+Reads the Vite build, inlines all assets as data URLs, renders via st.html.
+No file-serving or iframe src required — works reliably on Streamlit Cloud.
 """
 
 from __future__ import annotations
 
-import shutil
+import base64
+import re
 from pathlib import Path
 
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
-STATIC = ROOT / "static"
 
-# Ordered: first match wins
-CANDIDATES: list[tuple[str, Path]] = [
-    ("xauusd_dashboard/dist", ROOT / "xauusd_dashboard" / "dist"),
-    ("xauusd_dashboard/static", ROOT / "xauusd_dashboard" / "static"),
-    ("dist", ROOT / "dist"),
-    ("static", ROOT / "static"),
+CANDIDATES: list[Path] = [
+    ROOT / "xauusd_dashboard" / "dist",
+    ROOT / "xauusd_dashboard" / "static",
+    ROOT / "dist",
+    ROOT / "static",
 ]
 
 
-def _find_build() -> tuple[Path, Path] | None:
-    """Return (source_dir, index_path) for the first match, or None."""
-    for _label, folder in CANDIDATES:
-        idx = folder / "index.html"
-        if idx.exists():
-            return folder, idx
+def _find_build() -> Path | None:
+    for folder in CANDIDATES:
+        if (folder / "index.html").exists():
+            return folder
     return None
 
 
-def _sync_to_static(source: Path) -> Path:
-    """Copy source folder contents into STATIC/. Overwrites existing."""
-    if STATIC.exists():
-        shutil.rmtree(STATIC, ignore_errors=True)
-    shutil.copytree(str(source), str(STATIC))
-    return STATIC / "index.html"
+def _data_url(path: Path, mime: str) -> str:
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+def _inline_assets(html: str, folder: Path) -> str:
+    """Replace ./assets/*.js and ./assets/*.css references with base64 data URLs."""
+
+    def _replace(m: re.Match) -> str:
+        filename = m.group(1)
+        asset_path = folder / "assets" / filename
+        if not asset_path.exists():
+            # try direct sibling
+            asset_path = folder / filename
+        if not asset_path.exists():
+            return m.group(0)  # keep original
+        if filename.endswith(".js"):
+            return _data_url(asset_path, "application/javascript")
+        return _data_url(asset_path, "text/css")
+
+    html = re.sub(r'src="\./assets/([^"]+\.js)"', _replace, html)
+    html = re.sub(r'href="\./assets/([^"]+\.css)"', _replace, html)
+    # Also handle absolute /assets/ paths
+    html = re.sub(r'src="/assets/([^"]+\.js)"', _replace, html)
+    html = re.sub(r'href="/assets/([^"]+\.css)"', _replace, html)
+    return html
 
 
 def main() -> None:
@@ -46,51 +63,27 @@ def main() -> None:
         layout="wide",
     )
 
-    found = _find_build()
+    folder = _find_build()
 
-    if not found:
-        lines = []
-        for label, folder in CANDIDATES:
-            ok = (folder / "index.html").exists()
-            lines.append(f"{'✅' if ok else '❌'} {label}/index.html")
-        st.error(
-            "**Build output not found.** Checked:\n\n"
-            + "\n".join(lines)
-            + "\n\nRun `npm run build` inside xauusd_dashboard/ first."
-        )
+    if not folder:
+        lines = [f"{'✅' if (f / 'index.html').exists() else '❌'} {f}" for f in CANDIDATES]
+        st.error("**Build not found.**\n\n" + "\n".join(lines))
         st.stop()
 
-    source_dir, source_index = found
-
-    # Streamlit only serves from <repo>/static/ — sync the build there
-    if source_dir != STATIC:
-        target = _sync_to_static(source_dir)
-    else:
-        target = STATIC / "index.html"
-
-    if not target.exists():
-        st.error(
-            f"Sync failed. Source: `{source_dir}/` → Target: `{STATIC}/`.\n"
-            "Check that the build folder is committed to the repo."
-        )
-        st.stop()
+    html = (folder / "index.html").read_text(encoding="utf-8")
+    html = _inline_assets(html, folder)
 
     st.markdown(
         """
         <style>
         .stApp { background: #0a0e14; }
         .block-container { padding: 0 !important; max-width: 100% !important; }
-        iframe { border: none; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-    st.components.v1.iframe(
-        src="/app/static/index.html",
-        height=960,
-        scrolling=True,
-    )
+    st.components.v1.html(html, height=1200, scrolling=True)
 
 
 if __name__ == "__main__":

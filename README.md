@@ -75,6 +75,48 @@ xauusd_auto_report_v1/
 - 自动生成交易计划与场景推演
 - 风险控制规则提醒
 
+## Streamlit Cloud 部署排障
+
+部署后页面显示 "You do not have access" 或跳转到登录页，请按顺序检查：
+
+### 1. 确认 App 已部署且状态正常
+登录 [share.streamlit.io](https://share.streamlit.io) → 找到你的 App → 首页应显示绿色 **"Running"** 状态。如果是 "Stopped" / "Error" / 转圈中，先点 Reboot。
+
+### 2. 确认 App 设为 Public
+Settings → Sharing → **"Who can view this app"** 必须选 **Public**。如果刚改完，等 30 秒再试。
+
+### 3. 确认 GitHub 源码正确
+浏览器直接打开 `https://github.com/A1exwithkey/xauusd_auto_report_v1/blob/main/app.py`，检查文件内容是否包含：
+- `from modules.report_generator import _label, generate_report`（第 9 行）
+- `load_market_data.clear()`（刷新按钮逻辑）
+如果看不到这些，说明 GitHub 上的代码不是最新版，需要重新 push。
+
+### 4. 确认入口文件路径
+Settings → General → **Main file path** 必须是 `app.py`（不是 `streamlit_app.py` 或其他）。
+
+### 5. 确认 Python 版本
+Settings → General → **Python version** 选 `3.12`。
+
+### 6. 清除浏览器缓存
+Chrome 无痕窗口打开你的 URL。如果无痕能加载但正常窗口不能 → 清除 `streamlit.app` 的 cookie。
+
+### 7. 检查 App Logs
+Settings → 右侧 **App logs** → 看有没有 Python traceback（红色错误堆栈）。常见崩溃原因：
+- `requirements.txt` 缺依赖
+- import 路径错误
+- yfinance API 超时（启动时会自动下载数据）
+
+### 8. 终极重置
+如果以上全试过还不行：
+1. Settings → 最下面 **Delete app**
+2. 回首页 → **Create app** → 填空：
+   - Repository: `A1exwithkey/xauusd_auto_report_v1`
+   - Branch: `main`
+   - Main file path: `app.py`
+3. Deploy 后手动把 Settings → Sharing 设成 Public
+
+---
+
 ## 已知限制
 
 - yfinance 免费数据可能延迟或临时不可用

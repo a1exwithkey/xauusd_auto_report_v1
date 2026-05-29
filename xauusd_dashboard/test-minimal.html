@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"/><title>LW Chart Test</title></head>
+<body style="margin:0;background:#0a0e14;color:#e2e8f0">
+<h3 style="padding:10px">LW Charts V5 Test</h3>
+<div id="chart" style="width:100%;height:500px"></div>
+<script type="module">
+import {createChart, CandlestickSeries, LineSeries, createSeriesMarkers, ColorType} from '/node_modules/lightweight-charts/dist/lightweight-charts.development.mjs';
+
+const c = createChart(document.getElementById('chart'), {
+  layout: { background: { type: ColorType.Solid, color: '#0a0e14' }, textColor: '#8895aa' },
+  width: 800, height: 500,
+});
+
+const series = c.addSeries(CandlestickSeries, {
+  upColor: '#22c55e', downColor: '#ef4444',
+  borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+  wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+});
+
+const data = [];
+const now = Math.floor(Date.now()/1000);
+let price = 2650;
+for (let i = 0; i < 200; i++) {
+  price += (Math.random()-0.48)*3;
+  data.push({time: now-(200-i)*300, open: price, high: price+2, low: price-2, close: price});
+}
+series.setData(data);
+
+const line = c.addSeries(LineSeries, {color: '#a855f7'});
+line.setData(data.map(d => ({time: d.time, value: (d.open+d.close)/2})));
+
+const markers = [{time: data[100].time, position: 'aboveBar', color: '#ef4444', shape: 'arrowDown', text: 'H'}];
+createSeriesMarkers(series, markers);
+c.timeScale().fitContent();
+
+document.body.insertAdjacentHTML('beforeend', '<div style="padding:10px;color:#22c55e">Chart rendered OK</div>');
+</script>
+</body>
+</html>

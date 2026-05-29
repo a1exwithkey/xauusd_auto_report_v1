@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/chartview.tsx","./src/components/decisionpanel.tsx","./src/components/header.tsx","./src/lib/indicators.ts","./src/lib/mockdata.ts","./src/lib/smc.ts","./src/lib/strategy.ts"],"version":"5.9.3"}

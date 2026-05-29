@@ -1,10 +1,11 @@
-"""Chinese report generation for the XAUUSD structure dashboard."""
+"""Chinese report generation for the XAUUSD structure dashboard. Cached per input fingerprint."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 
 def fmt_price(value: float | int | None) -> str:
@@ -21,8 +22,15 @@ def _label(value: str) -> str:
         "bullish": "偏多",
         "bearish": "偏空",
         "range": "震荡",
+        "high": "高",
+        "medium": "中",
+        "low": "低",
         "smartmoneyconcepts": "SMC包",
         "fallback": "简化规则",
+        "volume_vwap": "成交量VWAP",
+        "fallback_typical_price_rolling_mean": "均价VWAP替代",
+        "indicator_error": "指标计算异常",
+        "not_calculated": "未计算",
     }
     return labels.get(str(value), str(value))
 
@@ -148,6 +156,13 @@ def _generate_plans(
     ]
 
 
+def _df_key(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "empty"
+    return f"{len(df)}_{df.index[0]}_{df.index[-1]}_{df['Close'].iloc[-1]:.5f}"
+
+
+@st.cache_data(ttl=3600, hash_funcs={pd.DataFrame: _df_key}, show_spinner=False)
 def generate_report(
     symbol: str,
     df_5m: pd.DataFrame,

@@ -1,10 +1,17 @@
-"""SMC/ICT structure engine with optional smartmoneyconcepts support."""
+"""SMC/ICT structure engine with optional smartmoneyconcepts support. Cached per DataFrame."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pandas as pd
+import streamlit as st
+
+
+def _df_key(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "empty"
+    return f"{len(df)}_{df.index[0]}_{df.index[-1]}_{df['Close'].iloc[-1]:.5f}"
 
 
 def _price(value: Any) -> float | None:
@@ -221,6 +228,7 @@ def _cn_trend(trend: str) -> str:
     return {"bullish": "偏多", "bearish": "偏空", "neutral": "中性"}.get(trend, trend)
 
 
+@st.cache_data(ttl=3600, hash_funcs={pd.DataFrame: _df_key}, show_spinner=False)
 def analyze_structure(df: pd.DataFrame, timeframe: str = "5min") -> dict[str, Any]:
     if df is None or df.empty or len(df) < 12:
         return {

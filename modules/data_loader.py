@@ -1,7 +1,8 @@
-"""Market data loading helpers for XAUUSD report app."""
+"""Market data loading helpers for XAUUSD report app. Uses concurrent downloads."""
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 
@@ -114,30 +115,34 @@ def _dxy_status(dxy: pd.DataFrame) -> str:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_market_data() -> dict[str, Any]:
-    """Load XAUUSD/Gold futures and DXY data with ticker fallbacks."""
+    """Load XAUUSD/Gold futures and DXY data with ticker fallbacks. DXY is fetched in parallel with gold data."""
     errors: list[str] = []
     selected_symbol = ""
-    m5 = _empty_ohlc()
-    h1 = _empty_ohlc()
 
-    for ticker in XAU_TICKERS:
-        candidate_m5, err_m5 = _download(ticker, period="5d", interval="5m")
-        candidate_h1, err_h1 = _download(ticker, period="60d", interval="1h")
+    # Download gold tickers serially (fallback chain), DXY in parallel
+    def _fetch_dxy() -> tuple[pd.DataFrame, str | None]:
+        return _download(DXY_TICKER, period="5d", interval="1h")
 
-        if err_m5:
-            errors.append(err_m5)
-        if err_h1:
-            errors.append(err_h1)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        dxy_future = pool.submit(_fetch_dxy)
 
-        if not candidate_m5.empty and not candidate_h1.empty:
-            selected_symbol = ticker
-            m5 = candidate_m5
-            h1 = candidate_h1
-            break
+        # Gold ticker fallback chain (serial by design — only try next if first fails)
+        m5 = _empty_ohlc()
+        h1 = _empty_ohlc()
+        for ticker in XAU_TICKERS:
+            candidate_m5, err_m5 = _download(ticker, period="5d", interval="5m")
+            candidate_h1, err_h1 = _download(ticker, period="60d", interval="1h")
+            if err_m5: errors.append(err_m5)
+            if err_h1: errors.append(err_h1)
+            if not candidate_m5.empty and not candidate_h1.empty:
+                selected_symbol = ticker
+                m5, h1 = candidate_m5, candidate_h1
+                break
 
-    dxy, dxy_error = _download(DXY_TICKER, period="5d", interval="1h")
-    if dxy_error:
-        errors.append(dxy_error)
+        # Collect DXY result
+        dxy, dxy_error = dxy_future.result()
+        if dxy_error:
+            errors.append(dxy_error)
 
     tz = pytz.timezone("Asia/Shanghai")
     return {

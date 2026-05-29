@@ -1,10 +1,11 @@
-"""Directional scoring model for report display."""
+"""Directional scoring model for report display. Cached per input fingerprint."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import pandas as pd
+import streamlit as st
 
 
 def _last(df: pd.DataFrame, column: str) -> float | None:
@@ -20,6 +21,18 @@ def _add(score: dict[str, int], bucket: str, points: int, reasons: list[str], re
     reasons.append(reason)
 
 
+def _df_key(df: pd.DataFrame) -> str:
+    if df is None or df.empty:
+        return "empty"
+    return f"{len(df)}_{df.index[0]}_{df.index[-1]}_{df['Close'].iloc[-1]:.5f}"
+
+
+def _struct_key(s: dict) -> str:
+    """Hash a structure dict by its key fields."""
+    return f"{s.get('trend','')}|{s.get('bos','')}|{s.get('choch','')}|{s.get('engine','')}"
+
+
+@st.cache_data(ttl=3600, hash_funcs={pd.DataFrame: _df_key}, show_spinner=False)
 def calculate_scores(
     df_5m: pd.DataFrame,
     structure_5m: dict[str, Any],

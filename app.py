@@ -6,7 +6,7 @@ import streamlit as st
 from modules.charting import create_price_chart, create_score_chart
 from modules.data_loader import load_market_data
 from modules.indicators import add_indicators
-from modules.report_generator import generate_report
+from modules.report_generator import _label, generate_report
 from modules.scoring import calculate_scores
 from modules.smc_engine import analyze_structure
 
@@ -71,24 +71,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
-def _label(value: str) -> str:
-    labels = {
-        "bullish": "偏多",
-        "bearish": "偏空",
-        "range": "震荡",
-        "high": "高",
-        "medium": "中",
-        "low": "低",
-        "smartmoneyconcepts": "SMC包",
-        "fallback": "简化规则",
-        "volume_vwap": "成交量VWAP",
-        "fallback_typical_price_rolling_mean": "均价VWAP替代",
-        "indicator_error": "指标计算异常",
-        "not_calculated": "未计算",
-    }
-    return labels.get(str(value), str(value))
 
 
 def _format_time(index: pd.Index) -> str:

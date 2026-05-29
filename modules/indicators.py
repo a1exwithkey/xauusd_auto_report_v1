@@ -1,9 +1,17 @@
-"""Technical indicator calculations."""
+"""Technical indicator calculations — all functions are pure, deterministic, and cached."""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import streamlit as st
+
+
+def _df_key(df: pd.DataFrame) -> str:
+    """Fast deterministic key for DataFrame-based caching."""
+    if df is None or df.empty:
+        return "empty"
+    return f"{len(df)}_{df.index[0]}_{df.index[-1]}_{df['Close'].iloc[-1]:.5f}"
 
 
 def _safe_series(df: pd.DataFrame, column: str) -> pd.Series:
@@ -58,8 +66,9 @@ def _intraday_vwap(df: pd.DataFrame) -> tuple[pd.Series, str]:
     return vwap.fillna(typical.rolling(20, min_periods=1).mean()), "volume_vwap"
 
 
+@st.cache_data(ttl=3600, hash_funcs={pd.DataFrame: _df_key}, show_spinner=False)
 def add_indicators(df: pd.DataFrame, include_vwap: bool = False) -> tuple[pd.DataFrame, dict[str, str]]:
-    """Add EMA, RSI, ATR and optional VWAP columns."""
+    """Add EMA, RSI, ATR and optional VWAP columns. Cached per unique DataFrame fingerprint."""
     meta = {"vwap_status": "not_calculated"}
     if df is None or df.empty:
         return pd.DataFrame(), meta

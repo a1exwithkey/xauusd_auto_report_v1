@@ -130,6 +130,8 @@ def _fetch_from_twelvedata() -> dict | None:
         "ticker": "XAU/USD",
         "data_source": "Twelve Data",
         "candles": candles,
+        "rows": len(candles),
+        "latest_close": candles[-1]["close"] if candles else None,
         "latest_time": str(df.index[-1]),
         "is_demo_data": False,
     }
@@ -155,6 +157,8 @@ def _fetch_from_yfinance() -> dict | None:
             "ticker": ticker,
             "data_source": "Yahoo Finance (fallback)",
             "candles": candles,
+            "rows": len(candles),
+            "latest_close": candles[-1]["close"] if candles else None,
             "latest_time": str(df.index[-1]),
             "is_demo_data": False,
         }

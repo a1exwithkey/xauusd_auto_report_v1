@@ -1,6 +1,6 @@
 """
 XAUUSD Market Structure Dashboard — Streamlit wrapper.
-Primary: Twelve Data XAU/USD spot. Fallback: yfinance GC=F.
+Primary: Twelve Data XAU/USD spot.
 Injects full candles into window.__XAUUSD_REAL_DATA__.
 """
 
@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "")
+ENV_FILES = (ROOT / ".env", ROOT.parent / ".env")
 
 CANDIDATES: list[Path] = [
     ROOT / "xauusd_dashboard" / "dist",
@@ -90,25 +91,56 @@ def _normalize_df(raw: pd.DataFrame) -> pd.DataFrame | None:
     return df
 
 
-def _fetch_from_twelvedata() -> dict | None:
+def _get_api_key() -> str:
+    key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        key = str(st.secrets.get("TWELVE_DATA_API_KEY", "")).strip()
+        if key:
+            return key
+    except Exception:
+        pass
+
+    for env_file in ENV_FILES:
+        if not env_file.exists():
+            continue
+        for line in env_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            name, value = stripped.split("=", 1)
+            if name.strip() == "TWELVE_DATA_API_KEY":
+                return value.strip().strip('"').strip("'")
+    return ""
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_from_twelvedata(api_key: str, cache_key: str) -> tuple[dict | None, str]:
     """Twelve Data XAU/USD 5min candles."""
+    import urllib.parse
     import urllib.request
 
-    url = (
-        f"https://api.twelvedata.com/time_series"
-        f"?symbol=XAU/USD&interval=5min&outputsize=300"
-        f"&apikey={API_KEY}"
-    )
+    params = urllib.parse.urlencode({
+        "symbol": "XAU/USD",
+        "interval": "5min",
+        "outputsize": 300,
+        "apikey": api_key,
+    })
+    url = f"https://api.twelvedata.com/time_series?{params}"
     try:
         with urllib.request.urlopen(url, timeout=15) as resp:
             body = json.loads(resp.read().decode())
-    except Exception:
-        return None
+    except Exception as exc:
+        return None, f"Twelve Data request failed: {exc}"
 
     if body.get("status") == "error" or "values" not in body:
-        return None
+        return None, str(body.get("message") or "Twelve Data returned no candle values.")
 
     rows = body["values"]
+    if not rows:
+        return None, "Twelve Data returned an empty candle list."
+
     # Twelve Data returns newest first — reverse to chronological
     rows.reverse()
 
@@ -131,6 +163,9 @@ def _fetch_from_twelvedata() -> dict | None:
     df = df.set_index("time")
 
     candles = _rows_to_candles(df)
+    if not candles:
+        return None, "Twelve Data candle parsing produced no usable rows."
+
     return {
         "ticker": "XAU/USD",
         "data_source": "Twelve Data",
@@ -140,42 +175,31 @@ def _fetch_from_twelvedata() -> dict | None:
         "latest_close": candles[-1]["close"] if candles else None,
         "latest_time": str(df.index[-1]),
         "is_demo_data": False,
-    }
+    }, ""
 
 
-def _fetch_from_yfinance() -> dict | None:
-    """Fallback: yfinance GC=F 5min candles."""
-    import yfinance as yf
-
-    for ticker in ("GC=F", "XAUUSD=X"):
-        try:
-            raw = yf.download(ticker, period="5d", interval="5m",
-                              auto_adjust=False, progress=False, threads=False)
-        except Exception:
-            continue
-
-        df = _normalize_df(raw)
-        if df is None:
-            continue
-
-        candles = _rows_to_candles(df)
-        return {
-            "ticker": ticker,
-            "data_source": "Yahoo Finance (fallback)",
-            "candles": candles,
-            "rows": len(candles),
-            "close": candles[-1]["close"] if candles else None,
-            "latest_close": candles[-1]["close"] if candles else None,
-            "latest_time": str(df.index[-1]),
-            "is_demo_data": False,
-        }
-    return None
+def _make_data_script(payload: dict | None, error: str = "") -> str:
+    safe_error = json.dumps(error, ensure_ascii=False)
+    if payload:
+        data = json.dumps(payload, ensure_ascii=False)
+        return f"<script>window.__XAUUSD_REAL_DATA__={data};window.__XAUUSD_DATA_ERROR__='';</script>"
+    return (
+        "<script>"
+        "window.__XAUUSD_REAL_DATA__=null;"
+        f"window.__XAUUSD_DATA_ERROR__={safe_error};"
+        "</script>"
+    )
 
 
-def main() -> None:
-    st.set_page_config(page_title="XAUUSD Market Structure Dashboard",
-                       page_icon="🟡", layout="wide")
+def _refresh_cache_key() -> str:
+    force_refresh = str(st.query_params.get("force_refresh", "")).strip()
+    if force_refresh:
+        return force_refresh
+    return str(int(datetime.now(timezone.utc).timestamp() // 3600))
 
+
+@st.fragment(run_every="1h")
+def _render_dashboard() -> None:
     folder = _find_build()
     if not folder:
         lines = [f"{'✅' if (f / 'index.html').exists() else '❌'} {f}" for f in CANDIDATES]
@@ -192,30 +216,62 @@ def main() -> None:
     js_content = js_files[-1].read_text(encoding="utf-8")
     css_content = css_files[-1].read_text(encoding="utf-8") if css_files else ""
 
-    # Fetch: Twelve Data → yfinance fallback
-    real = _fetch_from_twelvedata()
-    fallback_reason = ""
-    if not real:
-        fallback_reason = "Twelve Data returned empty/error; "
-        real = _fetch_from_yfinance()
-        if real:
-            fallback_reason += "using Yahoo Finance fallback."
-            real["fallback_reason"] = fallback_reason
-        else:
-            fallback_reason += "Yahoo Finance also failed."
-
-    if real:
-        inject = "<script>window.__XAUUSD_REAL_DATA__=" + json.dumps(real, ensure_ascii=False) + ";</script>"
+    api_key = _get_api_key()
+    if not api_key:
+        inject = _make_data_script(None, "缺少 TWELVE_DATA_API_KEY，无法获取实时 XAUUSD 行情。请在环境变量或 Streamlit Secrets 中配置。")
     else:
-        # No data at all — inject null so frontend shows error, never mock
-        inject = f"<script>window.__XAUUSD_REAL_DATA__=null;window.__XAUUSD_FALLBACK__={json.dumps(fallback_reason)};</script>"
+        real, error = _fetch_from_twelvedata(api_key, _refresh_cache_key())
+        inject = _make_data_script(real, error)
 
     html = HTML_TPL.replace("__REAL_DATA_SCRIPT__", inject)
     html = html.replace("__JS_PLACEHOLDER__", js_content)
     html = html.replace("__CSS_PLACEHOLDER__", css_content)
 
-    st.markdown("""<style>.stApp{background:#0a0e14}.block-container{padding:0!important;max-width:100%!important}</style>""", unsafe_allow_html=True)
     st.components.v1.html(html, height=1800, scrolling=True)
+
+
+def main() -> None:
+    st.set_page_config(page_title="XAUUSD Market Structure Dashboard",
+                       page_icon="🟡", layout="wide")
+
+    st.markdown("""
+    <style>
+      .stApp{background:#0a0e14}
+      .block-container{padding:62px 0 0!important;max-width:100%!important}
+      div[data-testid="stButton"]{
+        position:fixed;
+        top:90px;
+        right:18px;
+        z-index:9999;
+        width:auto!important;
+      }
+      div[data-testid="stButton"] button{
+        background:rgba(212,175,55,.16);
+        color:#f4d06f;
+        border:1px solid rgba(212,175,55,.48);
+        border-radius:7px;
+        min-height:30px;
+        padding:0 12px;
+        font-size:12px;
+        font-weight:800;
+        letter-spacing:0;
+        box-shadow:0 8px 20px rgba(0,0,0,.24);
+      }
+      div[data-testid="stButton"] button:hover{
+        background:rgba(212,175,55,.28);
+        border-color:rgba(244,208,111,.86);
+        color:#ffe28a;
+      }
+      div[data-testid="stButton"] button p{font-size:12px}
+    </style>
+    """, unsafe_allow_html=True)
+
+    if st.button("刷新", type="secondary", help="清除缓存并重新请求 Twelve Data"):
+        _fetch_from_twelvedata.clear()
+        st.query_params["force_refresh"] = str(int(datetime.now(timezone.utc).timestamp()))
+        st.rerun()
+
+    _render_dashboard()
 
 
 if __name__ == "__main__":

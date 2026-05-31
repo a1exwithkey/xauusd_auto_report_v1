@@ -1,7 +1,7 @@
 import { MarketAnalysis } from '../types';
 
 interface Props {
-  analysis: MarketAnalysis;
+  analysis: MarketAnalysis | null;
 }
 
 const RISK_RULES = [
@@ -13,6 +13,33 @@ const RISK_RULES = [
 ];
 
 export function DecisionPanel({ analysis }: Props) {
+  if (!analysis) {
+    return (
+      <aside className="space-y-3 overflow-y-auto max-h-[calc(100vh-120px)]">
+        <section className="bg-surface-card border border-bear/30 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-bear mb-3">交易决策</h3>
+          <div className="text-lg font-bold mb-2 text-bear">暂停分析，等待真实行情</div>
+          <div className="space-y-2 text-sm text-text-secondary">
+            <p>当前没有可用的 Twelve Data XAU/USD K线，系统不会用模拟数据生成方向判断。</p>
+            <p>配置 API Key 后刷新页面，才会计算结构、流动性、FVG 和场景推演。</p>
+          </div>
+        </section>
+
+        <section className="bg-surface-card border border-surface-border rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-bear mb-3">风险规则</h3>
+          <ul className="space-y-1">
+            {RISK_RULES.map((r, i) => (
+              <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
+                <span className="text-bear mt-0.5">•</span>
+                {r}
+              </li>
+            ))}
+          </ul>
+        </section>
+      </aside>
+    );
+  }
+
   const a = analysis;
 
   return (

@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react';
 import { MarketAnalysis, DataStatus } from '../types';
 
 interface Props {
-  analysis: MarketAnalysis;
+  analysis: MarketAnalysis | null;
   status: DataStatus;
   lastRefresh: number;
   nextRefresh: number;
-  onRefresh: () => void;
+  dataSource: string;
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -35,7 +35,7 @@ const BIAS_LABELS: Record<string, string> = {
   neutral: '中性',
 };
 
-export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }: Props) {
+export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource }: Props) {
   const [countdown, setCountdown] = useState('');
 
   useEffect(() => {
@@ -50,8 +50,8 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }
     return () => clearInterval(id);
   }, [nextRefresh]);
 
-  const p = analysis.currentPrice;
-  const change = analysis.changePercent;
+  const p = analysis?.currentPrice ?? null;
+  const change = analysis?.changePercent ?? 0;
   const changeStr = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
 
   const statusDot = {
@@ -63,7 +63,7 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }
 
   return (
     <header className="bg-surface-card border-b border-surface-border px-4 py-3">
-      <div className="mx-auto max-w-[1600px] flex flex-wrap items-center gap-x-6 gap-y-2">
+      <div className="mx-auto max-w-[1600px] flex flex-wrap items-center gap-x-6 gap-y-2 pr-24">
         {/* Title */}
         <div className="flex items-center gap-3">
           <span className="text-gold font-bold text-lg tracking-tight">XAUUSD</span>
@@ -72,19 +72,19 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }
 
         {/* Price */}
         <div className="flex items-baseline gap-2">
-          <span className="text-xl font-mono font-bold text-text-primary">{p.toFixed(2)}</span>
-          <span className={`text-sm font-mono ${change >= 0 ? 'text-bull' : 'text-bear'}`}>{changeStr}</span>
+          <span className="text-xl font-mono font-bold text-text-primary">{p !== null ? p.toFixed(2) : '--'}</span>
+          <span className={`text-sm font-mono ${change >= 0 ? 'text-bull' : 'text-bear'}`}>{p !== null ? changeStr : '--'}</span>
         </div>
 
         {/* State badges */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className={`px-2.5 py-0.5 rounded text-xs font-semibold text-white ${STATE_COLORS[analysis.state]}`}>
-            {STATE_LABELS[analysis.state] || analysis.state}
+          <span className={`px-2.5 py-0.5 rounded text-xs font-semibold text-white ${analysis ? STATE_COLORS[analysis.state] : 'bg-bear'}`}>
+            {analysis ? STATE_LABELS[analysis.state] || analysis.state : '无行情'}
           </span>
           <span className="px-2 py-0.5 rounded text-xs bg-surface-border text-text-secondary">
-            {BIAS_LABELS[analysis.bias]} · {analysis.confidence === 'high' ? '高置信' : analysis.confidence === 'medium' ? '中置信' : '低置信'}
+            {analysis ? `${BIAS_LABELS[analysis.bias]} · ${analysis.confidence === 'high' ? '高置信' : analysis.confidence === 'medium' ? '中置信' : '低置信'}` : '等待数据'}
           </span>
-          {analysis.tradeable ? (
+          {analysis?.tradeable ? (
             <span className="px-2 py-0.5 rounded text-xs bg-bull/20 text-bull border border-bull/30">可交易</span>
           ) : (
             <span className="px-2 py-0.5 rounded text-xs bg-warn/20 text-warn border border-warn/30">等待/谨慎</span>
@@ -92,7 +92,7 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }
         </div>
 
         {/* Right side */}
-        <div className="ml-auto flex items-center gap-4 flex-wrap">
+        <div className="ml-auto flex items-center gap-3 flex-wrap">
           {/* Status */}
           <div className="flex items-center gap-1.5 text-xs text-text-secondary">
             <span className={`w-2 h-2 rounded-full ${statusDot}`} />
@@ -103,18 +103,12 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, onRefresh }
           <span className="text-xs text-text-muted font-mono">
             下次刷新 {countdown}
           </span>
-
-          {/* Refresh btn */}
-          <button
-            onClick={onRefresh}
-            disabled={status === 'refreshing'}
-            className="px-3 py-1.5 rounded text-xs font-semibold bg-gold/20 text-gold border border-gold/30 hover:bg-gold/30 disabled:opacity-50 transition-colors"
-          >
-            {status === 'refreshing' ? '刷新中...' : '立即刷新'}
-          </button>
+          <span className="text-xs text-text-muted hidden sm:inline">
+            上次 {new Date(lastRefresh).toLocaleTimeString('zh-CN', { hour12: false })}
+          </span>
 
           {/* Data source */}
-          <span className="text-xs text-text-muted">Mock 数据</span>
+          <span className="text-xs text-text-muted max-w-[220px] truncate">{dataSource}</span>
         </div>
       </div>
     </header>

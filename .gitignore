@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 !/xauusd_dashboard/dist/
+!/xauusd_dashboard/dist/**
 
 # Virtual environment
 .venv/

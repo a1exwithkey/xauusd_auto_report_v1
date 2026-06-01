@@ -115,16 +115,14 @@ def _get_api_key() -> str:
     return ""
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_from_twelvedata(api_key: str, cache_key: str) -> tuple[dict | None, str]:
-    """Twelve Data XAU/USD 5min candles."""
+def _fetch_interval(api_key: str, interval: str, outputsize: int) -> tuple[list[dict] | None, str]:
     import urllib.parse
     import urllib.request
 
     params = urllib.parse.urlencode({
         "symbol": "XAU/USD",
-        "interval": "5min",
-        "outputsize": 300,
+        "interval": interval,
+        "outputsize": outputsize,
         "apikey": api_key,
     })
     url = f"https://api.twelvedata.com/time_series?{params}"
@@ -132,14 +130,14 @@ def _fetch_from_twelvedata(api_key: str, cache_key: str) -> tuple[dict | None, s
         with urllib.request.urlopen(url, timeout=15) as resp:
             body = json.loads(resp.read().decode())
     except Exception as exc:
-        return None, f"Twelve Data request failed: {exc}"
+        return None, f"{interval}: Twelve Data request failed: {exc}"
 
     if body.get("status") == "error" or "values" not in body:
-        return None, str(body.get("message") or "Twelve Data returned no candle values.")
+        return None, f"{interval}: {body.get('message') or 'Twelve Data returned no candle values.'}"
 
     rows = body["values"]
     if not rows:
-        return None, "Twelve Data returned an empty candle list."
+        return None, f"{interval}: Twelve Data returned an empty candle list."
 
     # Twelve Data returns newest first — reverse to chronological
     rows.reverse()
@@ -164,16 +162,44 @@ def _fetch_from_twelvedata(api_key: str, cache_key: str) -> tuple[dict | None, s
 
     candles = _rows_to_candles(df)
     if not candles:
-        return None, "Twelve Data candle parsing produced no usable rows."
+        return None, f"{interval}: Twelve Data candle parsing produced no usable rows."
+
+    return candles, ""
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _fetch_from_twelvedata(api_key: str, cache_key: str) -> tuple[dict | None, str]:
+    """Twelve Data XAU/USD multi-timeframe candles."""
+    intervals = {
+        "5m": ("5min", 300),
+        "15m": ("15min", 220),
+        "1h": ("1h", 220),
+        "4h": ("4h", 160),
+    }
+    timeframes: dict[str, list[dict]] = {}
+    errors: list[str] = []
+
+    for key, (interval, outputsize) in intervals.items():
+        candles, error = _fetch_interval(api_key, interval, outputsize)
+        if candles:
+            timeframes[key] = candles
+        elif error:
+            errors.append(error)
+
+    primary = timeframes.get("5m") or []
+    if not primary:
+        return None, "；".join(errors) or "Twelve Data returned no usable 5min XAU/USD data."
 
     return {
         "ticker": "XAU/USD",
         "data_source": "Twelve Data",
-        "candles": candles,
-        "rows": len(candles),
-        "close": candles[-1]["close"] if candles else None,
-        "latest_close": candles[-1]["close"] if candles else None,
-        "latest_time": str(df.index[-1]),
+        "candles": primary,
+        "timeframes": timeframes,
+        "rows": len(primary),
+        "close": primary[-1]["close"] if primary else None,
+        "latest_close": primary[-1]["close"] if primary else None,
+        "latest_time": datetime.fromtimestamp(primary[-1]["time"], timezone.utc).isoformat() if primary else "",
+        "partial_errors": errors,
         "is_demo_data": False,
     }, ""
 
@@ -227,7 +253,7 @@ def _render_dashboard() -> None:
     html = html.replace("__JS_PLACEHOLDER__", js_content)
     html = html.replace("__CSS_PLACEHOLDER__", css_content)
 
-    st.components.v1.html(html, height=1800, scrolling=True)
+    st.components.v1.html(html, height=4200, scrolling=True)
 
 
 def main() -> None:

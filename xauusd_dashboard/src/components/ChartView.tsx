@@ -25,11 +25,11 @@ export function ChartView({ candles, analysis }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const [mounted, setMounted] = useState(false);
-  const [showVWAP, setShowVWAP] = useState(false);
+  const [showVWAP, setShowVWAP] = useState(true);
   const [showEMA610, setShowEMA610] = useState(false);
   const [showSwings, setShowSwings] = useState(false);
-  const [showLiquidity, setShowLiquidity] = useState(false);
-  const [showFVG, setShowFVG] = useState(false);
+  const [showLiquidity, setShowLiquidity] = useState(true);
+  const [showFVG, setShowFVG] = useState(true);
   const [rangeBars, setRangeBars] = useState<RangeOption>(40);
 
   // Defer chart init by one tick so the container has width
@@ -125,14 +125,16 @@ export function ChartView({ candles, analysis }: Props) {
     // EMAs & VWAP
     const ema20 = calcEMA(candles, 20);
     const ema50 = calcEMA(candles, 50);
+    const ema200 = calcEMA(candles, 200);
 
-    for (const [data, color] of [
-      [ema20, '#a855f7'],
-      [ema50, '#eab308'],
+    for (const [data, color, width] of [
+      [ema20, '#a855f7', 2],
+      [ema50, '#eab308', 2],
+      [ema200, '#ef4444', 1],
     ] as const) {
       const s = chart.addSeries(LineSeries, {
         color,
-        lineWidth: 2,
+        lineWidth: width as 1 | 2,
         priceLineVisible: false,
         lastValueVisible: true,
         priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
@@ -184,13 +186,13 @@ export function ChartView({ candles, analysis }: Props) {
     if (analysis.support) {
       candleSeries.createPriceLine({
         price: analysis.support, color: 'rgba(34,197,94,0.85)', lineWidth: 1,
-        lineStyle: 2, axisLabelVisible: true, title: 'Support',
+        lineStyle: 2, axisLabelVisible: true, title: '关键支撑',
       });
     }
     if (analysis.resistance) {
       candleSeries.createPriceLine({
         price: analysis.resistance, color: 'rgba(239,68,68,0.85)', lineWidth: 1,
-        lineStyle: 2, axisLabelVisible: true, title: 'Resist',
+        lineStyle: 2, axisLabelVisible: true, title: '关键压力',
       });
     }
 
@@ -236,13 +238,14 @@ export function ChartView({ candles, analysis }: Props) {
   }, [mounted, candles, analysis, rangeBars, showEMA610, showFVG, showLiquidity, showSwings, showVWAP]);
 
   return (
-    <section className="bg-surface-card border border-surface-border rounded-lg" style={{ width: '100%', overflow: 'visible' }}>
-      <div className="px-4 py-2 border-b border-surface-border flex flex-wrap items-center gap-3 text-xs text-text-secondary">
+    <section className="bg-surface-card border border-gold/25 rounded-lg shadow-[0_0_28px_rgba(0,0,0,.24)]" style={{ width: '100%', overflow: 'visible' }}>
+      <div className="px-4 py-2 border-b border-gold/15 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
         <div className="flex items-center gap-3 min-w-fit">
-          <span className="font-semibold text-text-primary text-sm">XAUUSD · 5m</span>
+          <span className="font-semibold text-gold text-sm">XAUUSD · 5M 执行主图</span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full" style={{ background: '#a855f7' }} /> EMA20
             <span className="w-2 h-2 rounded-full ml-2" style={{ background: '#eab308' }} /> EMA50
+            <span className="w-2 h-2 rounded-full ml-2" style={{ background: '#ef4444' }} /> EMA200
           </span>
         </div>
 

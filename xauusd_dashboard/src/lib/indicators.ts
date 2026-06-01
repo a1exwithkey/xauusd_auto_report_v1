@@ -70,6 +70,35 @@ export function calcATR(candles: Candle[], period: number = 14): (number | null)
   return result;
 }
 
+/** Relative Strength Index */
+export function calcRSI(candles: Candle[], period: number = 14): (number | null)[] {
+  const result: (number | null)[] = new Array(candles.length).fill(null);
+  if (candles.length <= period) return result;
+
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    if (change >= 0) gains += change;
+    else losses += Math.abs(change);
+  }
+
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  result[period] = avgLoss === 0 ? 100 : +(100 - (100 / (1 + avgGain / avgLoss))).toFixed(2);
+
+  for (let i = period + 1; i < candles.length; i++) {
+    const change = candles[i].close - candles[i - 1].close;
+    const gain = Math.max(change, 0);
+    const loss = Math.max(-change, 0);
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+    result[i] = avgLoss === 0 ? 100 : +(100 - (100 / (1 + avgGain / avgLoss))).toFixed(2);
+  }
+
+  return result;
+}
+
 /** Current price relative to EMA20/EMA50 status */
 export function trendSignal(
   candles: Candle[],

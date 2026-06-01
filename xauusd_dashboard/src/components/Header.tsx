@@ -14,7 +14,7 @@ const STATE_LABELS: Record<string, string> = {
   trending_down: '趋势下跌',
   ranging: '震荡',
   structure_shift: '结构转换中',
-  sweeping_liquidity: '扫流动性格',
+  sweeping_liquidity: '扫流动性',
   pullback: '回踩/反抽中',
   waiting: '等待确认',
 };
@@ -32,7 +32,7 @@ const STATE_COLORS: Record<string, string> = {
 const BIAS_LABELS: Record<string, string> = {
   bullish: '偏多',
   bearish: '偏空',
-  neutral: '中性',
+  neutral: '震荡/等待确认',
 };
 
 export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource }: Props) {
@@ -62,12 +62,12 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource 
   }[status];
 
   return (
-    <header className="bg-surface-card border-b border-surface-border px-4 py-3">
+    <header className="bg-[#0b0f16] border-b border-gold/25 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,.24)]">
       <div className="mx-auto max-w-[1600px] flex flex-wrap items-center gap-x-6 gap-y-2 pr-24">
         {/* Title */}
-        <div className="flex items-center gap-3">
-          <span className="text-gold font-bold text-lg tracking-tight">XAUUSD</span>
-          <span className="text-text-secondary text-xs hidden sm:inline">Market Structure Dashboard</span>
+        <div className="flex flex-col min-w-[260px]">
+          <span className="text-gold font-bold text-lg tracking-tight">XAUUSD 黄金/美元 机构级交易分析报告</span>
+          <span className="text-text-secondary text-xs hidden sm:inline">PA + ICT + SMC · Market Structure Dashboard</span>
         </div>
 
         {/* Price */}
@@ -81,7 +81,7 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource 
           <span className={`px-2.5 py-0.5 rounded text-xs font-semibold text-white ${analysis ? STATE_COLORS[analysis.state] : 'bg-bear'}`}>
             {analysis ? STATE_LABELS[analysis.state] || analysis.state : '无行情'}
           </span>
-          <span className="px-2 py-0.5 rounded text-xs bg-surface-border text-text-secondary">
+          <span className="px-2 py-0.5 rounded text-xs bg-gold/10 text-gold border border-gold/25">
             {analysis ? `${BIAS_LABELS[analysis.bias]} · ${analysis.confidence === 'high' ? '高置信' : analysis.confidence === 'medium' ? '中置信' : '低置信'}` : '等待数据'}
           </span>
           {analysis?.tradeable ? (

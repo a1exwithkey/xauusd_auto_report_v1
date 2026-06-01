@@ -1,4 +1,4 @@
-import { MarketAnalysis } from '../types';
+import { MarketAnalysis, Scenario, TradePlan } from '../types';
 
 interface Props {
   analysis: MarketAnalysis | null;
@@ -6,162 +6,185 @@ interface Props {
 
 const RISK_RULES = [
   '单笔风险不超过账户 1%',
-  '不允许无止损入场',
+  '不允许无止损，不允许满仓',
   '没到关键位置不进场',
-  '方向冲突时降低仓位',
-  '连续亏损两笔后停止交易',
+  '没有确认信号不进场',
+  '方向冲突时降低仓位或观望',
+  '重要数据公布前后谨慎交易',
 ];
 
 export function DecisionPanel({ analysis }: Props) {
   if (!analysis) {
     return (
-      <aside className="space-y-3 overflow-y-auto max-h-[calc(100vh-120px)]">
-        <section className="bg-surface-card border border-bear/30 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-bear mb-3">交易决策</h3>
-          <div className="text-lg font-bold mb-2 text-bear">暂停分析，等待真实行情</div>
-          <div className="space-y-2 text-sm text-text-secondary">
-            <p>当前没有可用的 Twelve Data XAU/USD K线，系统不会用模拟数据生成方向判断。</p>
-            <p>配置 API Key 后刷新页面，才会计算结构、流动性、FVG 和场景推演。</p>
-          </div>
-        </section>
-
-        <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-bear mb-3">风险规则</h3>
-          <ul className="space-y-1">
-            {RISK_RULES.map((r, i) => (
-              <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
-                <span className="text-bear mt-0.5">•</span>
-                {r}
-              </li>
-            ))}
-          </ul>
-        </section>
+      <aside className="space-y-3">
+        <DecisionCard analysis={null} />
+        <RiskBlock />
       </aside>
     );
   }
 
-  const a = analysis;
-
   return (
-    <aside className="space-y-3 overflow-y-auto max-h-[calc(100vh-120px)]">
-      {/* Decision Card */}
-      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gold mb-3">交易决策</h3>
-
-        <div className={`text-lg font-bold mb-2 ${a.bias === 'bullish' ? 'text-bull' : a.bias === 'bearish' ? 'text-bear' : 'text-warn'}`}>
-          {a.decision}
-        </div>
-
-        <div className="space-y-2 text-sm">
-          <div>
-            <span className="text-text-muted text-xs">分析</span>
-            <p className="text-text-secondary leading-relaxed">{a.reason}</p>
-          </div>
-          <div>
-            <span className="text-text-muted text-xs">触发条件</span>
-            <p className="text-text-secondary">{a.trigger}</p>
-          </div>
-          <div>
-            <span className="text-text-muted text-xs">失效条件</span>
-            <p className="text-text-secondary">{a.invalidation}</p>
-          </div>
-          <div className="flex gap-3 pt-1">
-            <span className={`px-2 py-0.5 rounded text-xs ${a.riskLevel === 'high' ? 'bg-bear/20 text-bear' : a.riskLevel === 'medium' ? 'bg-warn/20 text-warn' : 'bg-bull/20 text-bull'}`}>
-              风险: {a.riskLevel === 'high' ? '高' : a.riskLevel === 'medium' ? '中' : '低'}
-            </span>
-            <span className="px-2 py-0.5 rounded text-xs bg-surface-border text-text-secondary">
-              置信: {a.confidence === 'high' ? '高' : a.confidence === 'medium' ? '中' : '低'}
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Market State Summary */}
-      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gold mb-3">市场状态</h3>
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <KV label="当日涨跌" value={`${a.changePercent >= 0 ? '+' : ''}${a.changePercent}%`} c={a.changePercent >= 0 ? 'text-bull' : 'text-bear'} />
-          <KV label="日高" value={a.dayHigh.toFixed(2)} />
-          <KV label="日低" value={a.dayLow.toFixed(2)} />
-          <KV label="1H 结构" value={a.trend1H === 'bullish' ? 'HH/HL 偏多' : a.trend1H === 'bearish' ? 'LH/LL 偏空' : '中性'} />
-          <KV label="BOS" value={a.bos === 'none' ? '无' : a.bos} />
-          <KV label="CHoCH" value={a.choch === 'none' ? '无' : a.choch} />
-          <KV label="价格区域" value={a.priceZone === 'premium' ? '溢价区' : a.priceZone === 'discount' ? '折扣区' : '中位区'} />
-          <KV label="扫流动性" value={a.state === 'sweeping_liquidity' ? '是' : '否'} />
-        </div>
-      </section>
-
-      {/* Key Levels */}
-      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gold mb-3">关键价位</h3>
-        <div className="space-y-2 text-sm">
-          <LevelRow label="阻力" price={a.resistance} color="text-bear" />
-          <LevelRow label="支撑" price={a.support} color="text-bull" />
-
-          {a.liquidity.slice(0, 3).map((l, i) => (
-            <LevelRow
-              key={i}
-              label={l.type === 'buy_side' ? '买方流动性 (BSL)' : '卖方流动性 (SSL)'}
-              price={l.price}
-              color={l.type === 'buy_side' ? 'text-warn' : 'text-[#3b82f6]'}
-              detail={`${l.touches}次触碰 · ${l.source}`}
-            />
-          ))}
-
-          {a.fvgZones.slice(0, 3).map((f, i) => (
-            <div key={i} className="flex justify-between items-center py-0.5 border-b border-surface-border last:border-0">
-              <span className="text-text-muted text-xs">
-                FVG {f.type === 'bullish' ? '多' : '空'}
-              </span>
-              <span className={`font-mono text-xs ${f.type === 'bullish' ? 'text-bull/70' : 'text-bear/70'}`}>
-                {f.bottom.toFixed(2)} – {f.top.toFixed(2)}
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Scenarios */}
-      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gold mb-3">场景推演</h3>
-        <div className="space-y-3">
-          {a.scenarios.map((s, i) => (
-            <div key={i} className="border-l-2 pl-3 py-1"
-              style={{ borderColor: s.probability === 'primary' ? '#22c55e' : s.probability === 'secondary' ? '#f59e0b' : '#ef4444' }}>
-              <div className="text-xs font-semibold text-text-primary mb-1">{s.label}</div>
-              <div className="text-xs text-text-secondary space-y-0.5">
-                <div><span className="text-text-muted">触发：</span>{s.trigger}</div>
-                <div><span className="text-text-muted">目标：</span>{s.target}</div>
-                <div><span className="text-text-muted">应对：</span>{s.response}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Risk */}
-      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-bear mb-3">风险规则</h3>
-        <ul className="space-y-1">
-          {RISK_RULES.map((r, i) => (
-            <li key={i} className="text-xs text-text-secondary flex items-start gap-1.5">
-              <span className="text-bear mt-0.5">•</span>
-              {r}
-            </li>
-          ))}
-        </ul>
-      </section>
+    <aside className="space-y-3">
+      <DecisionCard analysis={analysis} />
+      <KeyLevelsCard analysis={analysis} />
+      <RiskBlock />
     </aside>
   );
 }
 
-// --- Helpers ---
-
-function KV({ label, value, c }: { label: string; value: string; c?: string }) {
+export function ScenariosPanel({ scenarios }: { scenarios: Scenario[] }) {
   return (
-    <div className="flex justify-between border-b border-surface-border pb-1">
+    <section className="bg-surface-card border border-surface-border rounded-lg p-4">
+      <h3 className="text-sm font-semibold text-gold mb-3">高概率路径</h3>
+      <div className="space-y-3">
+        {scenarios.map((scenario) => (
+          <ScenarioCard key={scenario.label} scenario={scenario} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export function TradePlansPanel({ plans }: { plans: TradePlan[] }) {
+  return (
+    <section className="bg-surface-card border border-gold/20 rounded-lg p-4">
+      <h3 className="text-sm font-semibold text-gold mb-3">交易计划卡片</h3>
+      <div className="space-y-3">
+        {plans.map((plan) => (
+          <TradePlanCard key={plan.name} plan={plan} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DecisionCard({ analysis }: { analysis: MarketAnalysis | null }) {
+  if (!analysis) {
+    return (
+      <section className="bg-surface-card border border-bear/30 rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-bear mb-3">交易决策</h3>
+        <div className="text-lg font-bold mb-2 text-bear">暂停分析，等待真实行情</div>
+        <p className="text-sm text-text-secondary leading-relaxed">
+          当前没有可用的 Twelve Data XAU/USD K线，系统不会使用模拟数据生成方向判断。
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-surface-card border border-gold/30 rounded-lg p-4">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gold">当前交易决策</h3>
+          <div className={`text-lg font-bold mt-1 ${analysis.bias === 'bullish' ? 'text-bull' : analysis.bias === 'bearish' ? 'text-bear' : 'text-warn'}`}>
+            {analysis.decision}
+          </div>
+        </div>
+        <span className={`px-2 py-1 rounded text-xs font-bold ${
+          analysis.riskLevel === 'high' ? 'bg-bear/20 text-bear' : analysis.riskLevel === 'medium' ? 'bg-warn/20 text-warn' : 'bg-bull/20 text-bull'
+        }`}>
+          风险 {analysis.riskLevel === 'high' ? '高' : analysis.riskLevel === 'medium' ? '中' : '低'}
+        </span>
+      </div>
+      <div className="space-y-2 text-sm">
+        <TextRow label="主要原因" value={analysis.reason} />
+        <TextRow label="触发条件" value={analysis.trigger} />
+        <TextRow label="失效条件" value={analysis.invalidation} />
+      </div>
+    </section>
+  );
+}
+
+export function KeyLevelsCard({ analysis }: { analysis: MarketAnalysis }) {
+  return (
+    <section className="bg-surface-card border border-surface-border rounded-lg p-4">
+      <h3 className="text-sm font-semibold text-gold mb-3">关键价位与流动性</h3>
+      <div className="space-y-2 text-sm">
+        <LevelRow label="关键压力" price={analysis.resistance} color="text-bear" />
+        <LevelRow label="关键支撑" price={analysis.support} color="text-bull" />
+        {analysis.liquidity.slice(0, 4).map((l, i) => (
+          <LevelRow
+            key={`${l.type}-${i}`}
+            label={l.type === 'buy_side' ? 'Buy Side Liquidity' : 'Sell Side Liquidity'}
+            price={l.price}
+            color={l.type === 'buy_side' ? 'text-warn' : 'text-[#60a5fa]'}
+            detail={`${l.touches}次触碰 · ${sourceLabel(l.source)}`}
+          />
+        ))}
+        {analysis.fvgZones.slice(-3).map((f, i) => (
+          <div key={i} className="flex justify-between items-center py-1 border-b border-surface-border last:border-0">
+            <span className="text-text-muted text-xs">{f.type === 'bullish' ? 'Demand FVG' : 'Supply FVG'}</span>
+            <span className={`font-mono text-xs ${f.type === 'bullish' ? 'text-bull' : 'text-bear'}`}>
+              {f.bottom.toFixed(2)} - {f.top.toFixed(2)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ScenarioCard({ scenario }: { scenario: Scenario }) {
+  const color =
+    scenario.probability === 'primary' ? '#22c55e' :
+      scenario.probability === 'secondary' ? '#f59e0b' :
+        scenario.probability === 'breakout' ? '#d4a853' : '#a855f7';
+  return (
+    <div className="rounded-md border border-surface-border bg-[#0d131d] p-3" style={{ borderLeft: `3px solid ${color}` }}>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="text-sm font-bold text-text-primary">{scenario.label}</div>
+        <div className="text-xs font-mono font-bold" style={{ color }}>{scenario.probabilityValue}%</div>
+      </div>
+      <div className="space-y-1 text-xs text-text-secondary leading-relaxed">
+        <div><span className="text-text-muted">触发：</span>{scenario.trigger}</div>
+        <div><span className="text-text-muted">目标：</span>{scenario.target}</div>
+        <div><span className="text-text-muted">应对：</span>{scenario.response}</div>
+        <div><span className="text-text-muted">失效：</span>{scenario.invalidation}</div>
+      </div>
+    </div>
+  );
+}
+
+function TradePlanCard({ plan }: { plan: TradePlan }) {
+  const active = plan.status === 'ready';
+  const directionColor = plan.direction === 'Long' ? 'text-bull' : plan.direction === 'Short' ? 'text-bear' : 'text-warn';
+  return (
+    <div className={`rounded-md border p-3 ${active ? 'border-gold/30 bg-[#0d131d]' : 'border-warn/25 bg-warn/5'}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-bold text-text-primary">{plan.name}</div>
+        <div className={`text-xs font-bold ${directionColor}`}>{plan.direction}</div>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+        <KV label="Entry" value={plan.entry} />
+        <KV label="SL" value={plan.sl} />
+        <KV label="TP1" value={plan.tp1} />
+        <KV label="TP2" value={plan.tp2} />
+        <KV label="TP3" value={plan.tp3} />
+        <KV label="RR" value={plan.rr} />
+        <KV label="胜率估计" value={plan.winRate} />
+        <KV label="状态" value={active ? '可等待触发' : '等待确认'} />
+      </div>
+      <div className="mt-2 text-xs text-text-muted leading-relaxed">
+        失效条件：{plan.invalidation}
+      </div>
+    </div>
+  );
+}
+
+function TextRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
       <span className="text-text-muted text-xs">{label}</span>
-      <span className={`font-mono text-xs ${c ?? 'text-text-primary'}`}>{value}</span>
+      <p className="text-text-secondary leading-relaxed">{value}</p>
+    </div>
+  );
+}
+
+function KV({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-2 border-b border-surface-border pb-1">
+      <span className="text-text-muted">{label}</span>
+      <span className="font-mono text-text-primary text-right">{value}</span>
     </div>
   );
 }
@@ -176,4 +199,31 @@ function LevelRow({ label, price, color, detail }: { label: string; price: numbe
       </div>
     </div>
   );
+}
+
+function RiskBlock() {
+  return (
+    <section className="bg-surface-card border border-bear/25 rounded-lg p-4">
+      <h3 className="text-sm font-semibold text-bear mb-3">风险规则</h3>
+      <ul className="space-y-1">
+        {RISK_RULES.map((r) => (
+          <li key={r} className="text-xs text-text-secondary flex items-start gap-1.5">
+            <span className="text-bear mt-0.5">•</span>
+            {r}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function sourceLabel(source: string): string {
+  return {
+    equal_highs: 'Equal High',
+    equal_lows: 'Equal Low',
+    prior_high: '前高',
+    prior_low: '前低',
+    day_high: '日高',
+    day_low: '日低',
+  }[source] ?? source;
 }

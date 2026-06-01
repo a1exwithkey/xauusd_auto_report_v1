@@ -103,7 +103,7 @@ export function detectLiquidity(
   const atrArr = calcATR(candles, 14);
   const fallbackPrice = candles.length > 0 ? candles[candles.length - 1].close : 2600;
   const lastATR = atrArr[atrArr.length - 1] ?? fallbackPrice * 0.001;
-  const threshold = Math.max(lastATR * 0.25, 0.3);
+  const threshold = Math.max(lastATR * 0.15, 0.25);
   const levels: LiquidityLevel[] = [];
 
   const highs = swings.filter(s => s.type === 'high').slice(-8);
@@ -146,6 +146,22 @@ export function detectLiquidity(
   }
   if (levels.filter(l => l.type === 'sell_side').length === 0 && lastLow) {
     levels.push({ price: lastLow.price, type: 'sell_side', source: 'prior_low', touches: 1 });
+  }
+
+  const dayCandles = candles.slice(-288);
+  if (dayCandles.length > 5) {
+    levels.push({
+      price: Math.max(...dayCandles.map(c => c.high)),
+      type: 'buy_side',
+      source: 'day_high',
+      touches: 1,
+    });
+    levels.push({
+      price: Math.min(...dayCandles.map(c => c.low)),
+      type: 'sell_side',
+      source: 'day_low',
+      touches: 1,
+    });
   }
 
   return levels;

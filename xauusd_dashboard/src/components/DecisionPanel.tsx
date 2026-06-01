@@ -133,9 +133,18 @@ function ScenarioCard({ scenario }: { scenario: Scenario }) {
     <div className="rounded-md border border-surface-border bg-[#0d131d] p-3" style={{ borderLeft: `3px solid ${color}` }}>
       <div className="flex items-center justify-between gap-3 mb-2">
         <div className="text-sm font-bold text-text-primary">{scenario.label}</div>
-        <div className="text-xs font-mono font-bold" style={{ color }}>{scenario.probabilityValue}%</div>
+        <div className="flex items-center gap-2">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+            scenario.canTrade ? 'bg-bull/15 text-bull' : 'bg-warn/15 text-warn'
+          }`}>
+            {scenario.canTrade ? '可等触发' : '条件观察'}
+          </span>
+          <div className="text-xs font-mono font-bold" style={{ color }}>{scenario.probabilityValue}%</div>
+        </div>
       </div>
       <div className="space-y-1 text-xs text-text-secondary leading-relaxed">
+        <div><span className="text-text-muted">方向：</span>{scenario.direction}</div>
+        <div><span className="text-text-muted">RR：</span>{scenario.rr}</div>
         <div><span className="text-text-muted">触发：</span>{scenario.trigger}</div>
         <div><span className="text-text-muted">目标：</span>{scenario.target}</div>
         <div><span className="text-text-muted">应对：</span>{scenario.response}</div>
@@ -154,6 +163,7 @@ function TradePlanCard({ plan }: { plan: TradePlan }) {
         <div className="text-sm font-bold text-text-primary">{plan.name}</div>
         <div className={`text-xs font-bold ${directionColor}`}>{plan.direction}</div>
       </div>
+      <div className="text-[11px] text-text-muted mb-2">绑定路径：{plan.pathLabel}</div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
         <KV label="Entry" value={plan.entry} />
         <KV label="SL" value={plan.sl} />
@@ -165,7 +175,10 @@ function TradePlanCard({ plan }: { plan: TradePlan }) {
         <KV label="状态" value={active ? '可等待触发' : '等待确认'} />
       </div>
       <div className="mt-2 text-xs text-text-muted leading-relaxed">
-        失效条件：{plan.invalidation}
+        触发：{plan.trigger}
+      </div>
+      <div className="mt-1 text-xs text-text-muted leading-relaxed">
+        失效：{plan.invalidation}
       </div>
     </div>
   );

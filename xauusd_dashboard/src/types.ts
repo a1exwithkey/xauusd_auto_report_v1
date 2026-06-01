@@ -70,6 +70,7 @@ export type TimeframeStructure = {
 
 export type TradePlan = {
   name: string;
+  pathLabel: string;
   direction: 'Long' | 'Short' | 'Wait';
   entry: string;
   sl: string;
@@ -78,6 +79,7 @@ export type TradePlan = {
   tp3: string;
   rr: string;
   winRate: string;
+  trigger: string;
   invalidation: string;
   status: 'ready' | 'waiting';
 };
@@ -123,8 +125,11 @@ export type Scenario = {
   label: string;
   probability: 'primary' | 'secondary' | 'breakout' | 'extreme';
   probabilityValue: number;
+  direction: 'Long' | 'Short' | 'Range' | 'Wait';
+  rr: string;
   trigger: string;
   target: string;
   response: string;
   invalidation: string;
+  canTrade: boolean;
 };

@@ -93,15 +93,17 @@ export default function App() {
 function MarketOverview({ analysis }: { analysis: MarketAnalysis | null }) {
   const items = [
     ['当前价格', analysis ? analysis.currentPrice.toFixed(2) : '--'],
+    ['日内涨跌', analysis ? `${analysis.changePercent >= 0 ? '+' : ''}${analysis.changePercent.toFixed(2)}%` : '--'],
     ['市场偏向', analysis?.marketBiasText ?? '等待行情'],
     ['当前最佳机会', analysis?.bestOpportunity ?? '等待真实行情'],
     ['关键压力位', analysis?.resistance?.toFixed(2) ?? '等待确认'],
     ['关键支撑位', analysis?.support?.toFixed(2) ?? '等待确认'],
     ['是否适合交易', analysis?.tradeSuitability ?? '暂停分析'],
+    ['当前主路径', analysis?.scenarios[0]?.label ?? '等待路径'],
   ];
 
   return (
-    <section className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+    <section className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
       {items.map(([label, value]) => (
         <div key={label} className="bg-surface-card border border-gold/20 rounded-lg px-3 py-3 shadow-[0_0_18px_rgba(0,0,0,.18)]">
           <div className="text-[11px] text-text-muted mb-1">{label}</div>
@@ -114,16 +116,35 @@ function MarketOverview({ analysis }: { analysis: MarketAnalysis | null }) {
 
 function ProbabilityPanel({ analysis }: { analysis: MarketAnalysis | null }) {
   const p = analysis?.probabilities ?? { bearish: 0, bullish: 0, range: 0, reversal: 0 };
+  const bullEnd = p.bullish;
+  const bearEnd = bullEnd + p.bearish;
+  const rangeEnd = bearEnd + p.range;
+  const pieStyle = {
+    background: `conic-gradient(#22c55e 0 ${bullEnd}%, #ef4444 ${bullEnd}% ${bearEnd}%, #f59e0b ${bearEnd}% ${rangeEnd}%, #a855f7 ${rangeEnd}% 100%)`,
+  };
   const rows = [
-    ['空头概率', p.bearish, 'bg-bear', 'text-bear'],
     ['多头概率', p.bullish, 'bg-bull', 'text-bull'],
+    ['空头概率', p.bearish, 'bg-bear', 'text-bear'],
     ['震荡概率', p.range, 'bg-warn', 'text-warn'],
     ['极端反转概率', p.reversal, 'bg-purple-500', 'text-purple-300'],
   ] as const;
   return (
     <section className="bg-surface-card border border-gold/25 rounded-lg p-4">
-      <h3 className="text-sm font-bold text-gold mb-3">多空结构倾向</h3>
-      <div className="space-y-3">
+      <h3 className="text-sm font-bold text-gold mb-3">结构概率分布</h3>
+      <div className="flex items-center gap-4 mb-4">
+        <div className="relative w-28 h-28 rounded-full shrink-0 border border-gold/25" style={pieStyle}>
+          <div className="absolute inset-[18px] rounded-full bg-surface-card border border-surface-border flex flex-col items-center justify-center">
+            <span className="text-[10px] text-text-muted">主概率</span>
+            <span className="text-lg font-mono font-bold text-gold">
+              {Math.max(p.bullish, p.bearish, p.range, p.reversal)}%
+            </span>
+          </div>
+        </div>
+        <div className="text-xs text-text-secondary leading-relaxed">
+          饼图展示结构概率，不是胜率承诺。最大块必须能解释路径 A；若震荡最大，系统应降级为等待或区间路径。
+        </div>
+      </div>
+      <div className="space-y-2">
         {rows.map(([label, value, bar, text]) => (
           <div key={label}>
             <div className="flex justify-between text-xs mb-1">

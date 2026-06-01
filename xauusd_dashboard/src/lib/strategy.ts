@@ -3,8 +3,11 @@ import {
   MarketAnalysis,
   Bias,
   Confidence,
+  FVGZone,
+  LiquidityLevel,
   MarketState,
   Scenario,
+  SwingPoint,
   TimeframeCandles,
   TimeframeKey,
   TimeframeStructure,
@@ -27,6 +30,19 @@ type TfSnapshot = {
   support: number | null;
   resistance: number | null;
   summary: string;
+};
+
+type LevelContext = {
+  support: number | null;
+  resistance: number | null;
+  supportSource: string;
+  resistanceSource: string;
+  buyLiquidity: number | null;
+  sellLiquidity: number | null;
+  position: 'near_support' | 'near_resistance' | 'middle' | 'compressed';
+  longRoom: number;
+  shortRoom: number;
+  valid: boolean;
 };
 
 const TF_LABELS: Record<TimeframeKey, string> = {
@@ -119,98 +135,192 @@ function normalizeScores(raw: { bullish: number; bearish: number; range: number;
   };
 }
 
-function buildTradePlans(
-  bias: Bias,
-  price: number,
-  support: number | null,
-  resistance: number | null,
+function nearestAbove(levels: number[], price: number): number | null {
+  const valid = levels.filter(v => Number.isFinite(v) && v > price).sort((a, b) => a - b);
+  return valid[0] ?? null;
+}
+
+function nearestBelow(levels: number[], price: number): number | null {
+  const valid = levels.filter(v => Number.isFinite(v) && v < price).sort((a, b) => b - a);
+  return valid[0] ?? null;
+}
+
+function buildLevelContext(
+  candles: Candle[],
+  swings: SwingPoint[],
+  fvg: FVGZone[],
+  liquidity: LiquidityLevel[],
   atr: number,
-  probabilities: MarketAnalysis['probabilities'],
-  conflict: boolean,
-  zone: MarketAnalysis['priceZone'],
-): TradePlan[] {
-  const waitPlan: TradePlan = {
-    name: '观望计划',
-    direction: 'Wait',
-    entry: '等待确认，当前位置不适合入场。',
-    sl: '等待确认',
-    tp1: '等待确认',
-    tp2: '等待确认',
-    tp3: '等待确认',
-    rr: '等待确认',
-    winRate: `${Math.max(probabilities.range, 35)}% 观察概率`,
-    invalidation: '出现清晰BOS/CHoCH并回踩确认后，重新评估。',
-    status: 'waiting',
+): LevelContext {
+  const price = candles[candles.length - 1]?.close ?? 0;
+  const dayCandles = candles.slice(-288);
+  const dayHigh = dayCandles.length ? Math.max(...dayCandles.map(c => c.high)) : price + atr;
+  const dayLow = dayCandles.length ? Math.min(...dayCandles.map(c => c.low)) : price - atr;
+  const minGap = Math.max(atr * 0.12, price * 0.00008, 0.25);
+
+  const swingHighs = swings.filter(s => s.type === 'high').map(s => s.price);
+  const swingLows = swings.filter(s => s.type === 'low').map(s => s.price);
+  const bearishFvgAbove = fvg.filter(z => z.type === 'bearish' && z.bottom > price + minGap).map(z => z.bottom);
+  const bullishFvgBelow = fvg.filter(z => z.type === 'bullish' && z.top < price - minGap).map(z => z.top);
+  const buyLiqAbove = liquidity.filter(l => l.type === 'buy_side' && l.price > price + minGap).map(l => l.price);
+  const sellLiqBelow = liquidity.filter(l => l.type === 'sell_side' && l.price < price - minGap).map(l => l.price);
+
+  const resistanceCandidates = [...swingHighs, ...bearishFvgAbove, ...buyLiqAbove, dayHigh].filter(v => v > price + minGap);
+  const supportCandidates = [...swingLows, ...bullishFvgBelow, ...sellLiqBelow, dayLow].filter(v => v < price - minGap);
+  const resistance = nearestAbove(resistanceCandidates, price);
+  const support = nearestBelow(supportCandidates, price);
+  const buyLiquidity = nearestAbove([...buyLiqAbove, dayHigh], price);
+  const sellLiquidity = nearestBelow([...sellLiqBelow, dayLow], price);
+
+  const longRoom = resistance ? resistance - price : 0;
+  const shortRoom = support ? price - support : 0;
+  const totalRange = support && resistance ? resistance - support : 0;
+  const rangePos = totalRange > 0 ? (price - support!) / totalRange : 0.5;
+
+  let position: LevelContext['position'] = 'middle';
+  if (!support || !resistance || totalRange < atr * 1.2) position = 'compressed';
+  else if (longRoom <= atr * 0.9 || rangePos > 0.68) position = 'near_resistance';
+  else if (shortRoom <= atr * 0.9 || rangePos < 0.32) position = 'near_support';
+
+  const source = (level: number | null, side: 'support' | 'resistance') => {
+    if (level == null) return '未确认';
+    if (side === 'resistance' && Math.abs(level - dayHigh) <= minGap) return '日高/前高流动性';
+    if (side === 'support' && Math.abs(level - dayLow) <= minGap) return '日低/前低流动性';
+    if (side === 'resistance' && buyLiqAbove.some(v => Math.abs(v - level) <= minGap)) return 'Buy Side Liquidity';
+    if (side === 'support' && sellLiqBelow.some(v => Math.abs(v - level) <= minGap)) return 'Sell Side Liquidity';
+    if (side === 'resistance' && bearishFvgAbove.some(v => Math.abs(v - level) <= minGap)) return 'Bearish FVG';
+    if (side === 'support' && bullishFvgBelow.some(v => Math.abs(v - level) <= minGap)) return 'Bullish FVG';
+    return side === 'resistance' ? '结构压力' : '结构支撑';
   };
 
-  const canLong = bias === 'bullish' && support != null && resistance != null && !conflict && zone !== 'mid';
-  const canShort = bias === 'bearish' && support != null && resistance != null && !conflict && zone !== 'mid';
-  const plans: TradePlan[] = [];
+  return {
+    support,
+    resistance,
+    supportSource: source(support, 'support'),
+    resistanceSource: source(resistance, 'resistance'),
+    buyLiquidity,
+    sellLiquidity,
+    position,
+    longRoom,
+    shortRoom,
+    valid: support != null && resistance != null && totalRange >= atr * 1.2,
+  };
+}
 
-  if (canLong) {
-    const entry = Math.min(price, support + atr * 0.35);
-    const sl = support - atr * 0.75;
-    const tp1 = Math.max(price + atr * 1.2, resistance);
-    const tp2 = tp1 + atr * 1.4;
-    const tp3 = tp2 + atr * 1.3;
-    const rr = (tp1 - entry) / Math.max(entry - sl, 0.01);
-    if (rr >= 1.5) {
-      plans.push(
-        makePlan('激进计划', 'Long', entry, sl, tp1, tp2, tp3, rr, probabilities.bullish, '跌破支撑并收在支撑下方。'),
-        makePlan('稳健计划', 'Long', support, sl, tp1, tp2, tp3, rr, Math.max(probabilities.bullish - 5, 0), '回踩失败，价格重新跌回结构位下方。'),
-        makePlan('反向计划', 'Short', resistance + atr * 0.15, resistance + atr * 0.85, support, support - atr, support - atr * 1.8, 1.6, probabilities.reversal, '突破阻力后站稳，不再做反向。'),
-      );
-    }
+function rrLabel(value: number | null): string {
+  return value == null || !Number.isFinite(value) || value <= 0 ? '等待确认' : `1:${value.toFixed(1)}`;
+}
+
+function strongestProbability(probabilities: MarketAnalysis['probabilities']): 'bullish' | 'bearish' | 'range' | 'reversal' {
+  const entries = Object.entries(probabilities) as Array<[keyof MarketAnalysis['probabilities'], number]>;
+  return entries.sort((a, b) => b[1] - a[1])[0][0];
+}
+
+function validateConsistency(
+  probabilities: MarketAnalysis['probabilities'],
+  bias: Bias,
+  primaryDirection: Scenario['direction'],
+): string {
+  const strongest = strongestProbability(probabilities);
+  if (strongest === 'range' && primaryDirection !== 'Range') return '概率最大项为震荡，主路径不应强行多空';
+  if (strongest === 'bullish' && primaryDirection === 'Short') return '概率最大项偏多，但主路径偏空';
+  if (strongest === 'bearish' && primaryDirection === 'Long') return '概率最大项偏空，但主路径偏多';
+  if (bias === 'neutral' && (primaryDirection === 'Long' || primaryDirection === 'Short')) return '顶部方向等待确认，但主路径给出单边方向';
+  return '';
+}
+
+function isDirectionallyValidPlan(direction: 'Long' | 'Short', entry: number, sl: number, tp1: number): boolean {
+  if (direction === 'Long') return entry < tp1 && sl < entry;
+  return entry > tp1 && sl > entry;
+}
+
+function scenarioRoomRR(direction: Scenario['direction'], price: number, levels: LevelContext, atr: number): number | null {
+  if (!levels.valid || levels.support == null || levels.resistance == null) return null;
+  if (direction === 'Long') {
+    const entry = Math.min(price, levels.support + atr * 0.35);
+    const sl = levels.support - atr * 0.75;
+    const tp = Math.max(levels.resistance, entry + atr);
+    return (tp - entry) / Math.max(entry - sl, 0.01);
   }
+  if (direction === 'Short') {
+    const entry = Math.max(price, levels.resistance - atr * 0.35);
+    const sl = levels.resistance + atr * 0.75;
+    const tp = Math.min(levels.support, entry - atr);
+    return (entry - tp) / Math.max(sl - entry, 0.01);
+  }
+  return null;
+}
 
-  if (canShort) {
-    const entry = Math.max(price, resistance - atr * 0.35);
-    const sl = resistance + atr * 0.75;
-    const tp1 = Math.min(price - atr * 1.2, support);
-    const tp2 = tp1 - atr * 1.4;
-    const tp3 = tp2 - atr * 1.3;
+function capExtreme(probabilities: MarketAnalysis['probabilities'], swept: boolean, choch: string): MarketAnalysis['probabilities'] {
+  const main = Math.max(probabilities.bullish, probabilities.bearish, probabilities.range);
+  const confirmedReversal = swept && choch !== 'none';
+  return {
+    ...probabilities,
+    reversal: confirmedReversal ? probabilities.reversal : Math.min(probabilities.reversal, Math.max(main - 8, 5)),
+  };
+}
+
+function resolveBias(
+  probabilities: MarketAnalysis['probabilities'],
+  trend4H: Bias,
+  trend1H: Bias,
+  conflict: boolean,
+): Bias {
+  const gap = Math.abs(probabilities.bullish - probabilities.bearish);
+  if (conflict || gap < 8) return 'neutral';
+  if (probabilities.range >= Math.max(probabilities.bullish, probabilities.bearish)) return 'neutral';
+  if (probabilities.bullish > probabilities.bearish && (trend4H !== 'bearish' || trend1H === 'bullish')) return 'bullish';
+  if (probabilities.bearish > probabilities.bullish && (trend4H !== 'bullish' || trend1H === 'bearish')) return 'bearish';
+  return 'neutral';
+}
+
+function buildTradePlans(
+  scenarios: Scenario[],
+  price: number,
+  levels: LevelContext,
+  atr: number,
+  probabilities: MarketAnalysis['probabilities'],
+  blockReason: string,
+  zone: MarketAnalysis['priceZone'],
+): TradePlan[] {
+  const plans = scenarios.slice(0, 4).map((scenario) => {
+    if (scenario.direction !== 'Long' && scenario.direction !== 'Short') {
+      return waitPlanForScenario(scenario, blockReason || '该路径不是可执行方向，等待结构确认。');
+    }
+
+    if (!scenario.canTrade || levels.support == null || levels.resistance == null || zone === 'mid') {
+      return waitPlanForScenario(scenario, blockReason);
+    }
+
+    if (scenario.direction === 'Long') {
+      const entry = scenario.probability === 'breakout' ? levels.resistance + atr * 0.12 : Math.min(price, levels.support + atr * 0.35);
+      const sl = scenario.probability === 'breakout' ? levels.resistance - atr * 0.55 : levels.support - atr * 0.75;
+      const tp1 = Math.max(entry + atr * 1.4, levels.resistance + atr * 0.4);
+      const tp2 = tp1 + atr * 1.2;
+      const tp3 = tp2 + atr * 1.2;
+      const rr = (tp1 - entry) / Math.max(entry - sl, 0.01);
+      return rr >= 1.5 && isDirectionallyValidPlan('Long', entry, sl, tp1)
+        ? makePlan(`${scenario.label} 计划`, scenario.label, 'Long', entry, sl, tp1, tp2, tp3, rr, scenario.probabilityValue, scenario.trigger, scenario.invalidation)
+        : waitPlanForScenario(scenario, 'RR不足或多单方向关系不合法，等待更好的价格。');
+    }
+
+    const entry = scenario.probability === 'breakout' ? levels.support - atr * 0.12 : Math.max(price, levels.resistance - atr * 0.35);
+    const sl = scenario.probability === 'breakout' ? levels.support + atr * 0.55 : levels.resistance + atr * 0.75;
+    const tp1 = Math.min(entry - atr * 1.4, levels.support - atr * 0.4);
+    const tp2 = tp1 - atr * 1.2;
+    const tp3 = tp2 - atr * 1.2;
     const rr = (entry - tp1) / Math.max(sl - entry, 0.01);
-    if (rr >= 1.5) {
-      plans.push(
-        makePlan('激进计划', 'Short', entry, sl, tp1, tp2, tp3, rr, probabilities.bearish, '突破阻力并收在阻力上方。'),
-        makePlan('稳健计划', 'Short', resistance, sl, tp1, tp2, tp3, rr, Math.max(probabilities.bearish - 5, 0), '反抽失败后重新站上结构位。'),
-        makePlan('反向计划', 'Long', support - atr * 0.15, support - atr * 0.85, resistance, resistance + atr, resistance + atr * 1.8, 1.6, probabilities.reversal, '跌破支撑后无法收回，不做反向。'),
-      );
-    }
-  }
+    return rr >= 1.5 && isDirectionallyValidPlan('Short', entry, sl, tp1)
+      ? makePlan(`${scenario.label} 计划`, scenario.label, 'Short', entry, sl, tp1, tp2, tp3, rr, scenario.probabilityValue, scenario.trigger, scenario.invalidation)
+      : waitPlanForScenario(scenario, 'RR不足或空单方向关系不合法，等待更好的价格。');
+  });
 
-  if (plans.length === 0) {
-    plans.push({
-      name: '激进计划',
-      direction: 'Wait',
-      entry: '等待确认，当前位置不适合入场。',
-      sl: '等待确认',
-      tp1: '等待确认',
-      tp2: '等待确认',
-      tp3: '等待确认',
-      rr: '不足 1:1.5 或结构冲突',
-      winRate: `${Math.max(probabilities.bullish, probabilities.bearish)}% 方向倾向`,
-      invalidation: conflict ? '多周期方向冲突，只输出观察计划。' : '价格在区间中部或关键位不清晰。',
-      status: 'waiting',
-    });
-    plans.push({
-      ...waitPlan,
-      name: '稳健计划',
-      invalidation: '等价格触及关键支撑/压力并出现确认K线。',
-    });
-    plans.push({
-      ...waitPlan,
-      name: '反向计划',
-      invalidation: '只有扫流动性后快速收回，才考虑反向。',
-    });
-  }
-
-  plans.push(waitPlan);
-  return plans.slice(0, 4);
+  return plans;
 }
 
 function makePlan(
   name: string,
+  pathLabel: string,
   direction: 'Long' | 'Short',
   entry: number,
   sl: number,
@@ -219,10 +329,12 @@ function makePlan(
   tp3: number,
   rr: number,
   winRate: number,
+  trigger: string,
   invalidation: string,
 ): TradePlan {
   return {
     name,
+    pathLabel,
     direction,
     entry: round(entry),
     sl: round(sl),
@@ -231,40 +343,77 @@ function makePlan(
     tp3: round(tp3),
     rr: `1:${rr.toFixed(1)}`,
     winRate: `${pct(winRate)}%`,
+    trigger,
     invalidation,
     status: 'ready',
   };
 }
 
+function waitPlanForScenario(scenario: Scenario, reason: string): TradePlan {
+  return {
+    name: `${scenario.label} 计划`,
+    pathLabel: scenario.label,
+    direction: 'Wait',
+    entry: `等待触发：${scenario.trigger}`,
+    sl: '等待确认',
+    tp1: scenario.target,
+    tp2: '等待路径确认',
+    tp3: '等待路径确认',
+    rr: '等待确认',
+    winRate: `${scenario.probabilityValue}% 结构概率`,
+    trigger: scenario.trigger,
+    invalidation: reason || scenario.invalidation,
+    status: 'waiting',
+  };
+}
+
 function buildScenarios(
   bias: Bias,
-  support: number | null,
-  resistance: number | null,
+  levels: LevelContext,
+  price: number,
+  atr: number,
   probabilities: MarketAnalysis['probabilities'],
+  blocked: boolean,
+  zone: MarketAnalysis['priceZone'],
+  swept: boolean,
+  choch: string,
+  bos: string,
 ): Scenario[] {
-  const upper = round(resistance);
-  const lower = round(support);
+  const upper = round(levels.resistance);
+  const lower = round(levels.support);
+  const noLevelsText = '暂无有效关键位';
+  const longRR = scenarioRoomRR('Long', price, levels, atr);
+  const shortRR = scenarioRoomRR('Short', price, levels, atr);
+  const breakoutLongRR = levels.valid && levels.resistance ? (Math.max((levels.buyLiquidity ?? levels.resistance + atr * 1.5) - (levels.resistance + atr * 0.12), atr) / Math.max(atr * 0.67, 0.01)) : null;
+  const breakoutShortRR = levels.valid && levels.support ? (Math.max((levels.support - atr * 0.12) - (levels.sellLiquidity ?? levels.support - atr * 1.5), atr) / Math.max(atr * 0.67, 0.01)) : null;
+  const canMainTrade = !blocked && zone !== 'mid' && levels.valid;
+  const strongReverseBos =
+    (bias === 'bullish' && bos === 'bearish BOS') ||
+    (bias === 'bearish' && bos === 'bullish BOS') ||
+    (bias === 'neutral' && bos !== 'none');
+  const hasExtremeTrigger = swept || choch !== 'none' || strongReverseBos;
+  const canExtremeTrade = hasExtremeTrigger && !blocked;
   if (bias === 'bullish') {
     return [
-      { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.bullish, trigger: `回踩${lower}附近不破并出现5M转强`, target: `先看${upper}，站稳后看上方流动性`, response: '等回踩确认，不在区间中部追多。', invalidation: `跌破${lower}并形成bearish CHoCH` },
-      { label: 'B 次路径', probability: 'secondary', probabilityValue: probabilities.range, trigger: '价格继续卡在VWAP附近震荡', target: '区间上下沿来回测试', response: '降低频率，只看边界确认。', invalidation: '有效突破并回踩确认' },
-      { label: 'C 破位延续', probability: 'breakout', probabilityValue: Math.max(probabilities.bullish - 8, 0), trigger: `放量突破${upper}后回踩不破`, target: '上方Buy Side Liquidity', response: '突破后等回踩，不追第一根。', invalidation: '突破后快速跌回区间' },
-      { label: 'D 极端反转', probability: 'extreme', probabilityValue: probabilities.reversal, trigger: `扫高后跌回${upper}下方`, target: lower, response: '多头失效，等bearish CHoCH再考虑反向。', invalidation: '重新站上扫高位' },
+      { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.bullish, direction: 'Long', rr: rrLabel(longRR), trigger: levels.valid ? `回踩${lower}附近不破，5M重新转强` : noLevelsText, target: levels.resistance ? `先看${upper}，再看上方流动性` : noLevelsText, response: '只等回踩，不追高。', invalidation: levels.support ? `跌破${lower}并收不回` : noLevelsText, canTrade: canMainTrade && (longRR ?? 0) >= 1.5 },
+      { label: 'B 备选路径', probability: 'secondary', probabilityValue: Math.max(probabilities.range, 12), direction: 'Range', rr: '区间观察', trigger: levels.valid ? '价格继续围绕VWAP横向运行' : noLevelsText, target: levels.valid ? `${lower} - ${upper}` : noLevelsText, response: '区间边界处理，中间不动。', invalidation: '收盘突破区间并回踩确认', canTrade: false },
+      { label: 'C 破位路径', probability: 'breakout', probabilityValue: Math.max(probabilities.bullish - 8, 8), direction: 'Long', rr: rrLabel(breakoutLongRR), trigger: levels.resistance ? `突破${upper}后回踩不破` : noLevelsText, target: levels.buyLiquidity ? `上方Buy Side Liquidity ${round(levels.buyLiquidity)}` : '上方空间待确认', response: '突破后等回踩确认。', invalidation: '突破后快速跌回区间', canTrade: false },
+      { label: 'D 极端路径', probability: 'extreme', probabilityValue: probabilities.reversal, direction: 'Short', rr: rrLabel(shortRR), trigger: hasExtremeTrigger ? `扫高/反向结构确认后跌回${upper}下方并转弱` : '未出现扫流动性/CHoCH/强反向BOS，仅观察', target: levels.support ? lower : noLevelsText, response: '只作为反向条件路径。', invalidation: '重新站上扫高位', canTrade: canExtremeTrade && (shortRR ?? 0) >= 1.5 },
     ];
   }
   if (bias === 'bearish') {
     return [
-      { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.bearish, trigger: `反抽${upper}附近受压并出现5M转弱`, target: `先看${lower}，跌破后看下方流动性`, response: '等反抽确认，不在低位追空。', invalidation: `突破${upper}并形成bullish CHoCH` },
-      { label: 'B 次路径', probability: 'secondary', probabilityValue: probabilities.range, trigger: '价格继续贴近VWAP横向运行', target: '回到区间中位', response: '只看高低边界，不追单。', invalidation: '突破后回踩确认' },
-      { label: 'C 破位延续', probability: 'breakout', probabilityValue: Math.max(probabilities.bearish - 8, 0), trigger: `跌破${lower}后反抽不回`, target: '下方Sell Side Liquidity', response: '跌破后等反抽确认。', invalidation: '跌破后快速收回区间' },
-      { label: 'D 极端反转', probability: 'extreme', probabilityValue: probabilities.reversal, trigger: `扫低后重新站回${lower}上方`, target: upper, response: '空头失效，等bullish CHoCH再考虑反向。', invalidation: '重新跌破扫低位' },
+      { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.bearish, direction: 'Short', rr: rrLabel(shortRR), trigger: levels.valid ? `反抽${upper}附近受压，5M重新转弱` : noLevelsText, target: levels.support ? `先看${lower}，再看下方流动性` : noLevelsText, response: '只等反抽，不追低。', invalidation: levels.resistance ? `突破${upper}并收不回` : noLevelsText, canTrade: canMainTrade && (shortRR ?? 0) >= 1.5 },
+      { label: 'B 备选路径', probability: 'secondary', probabilityValue: Math.max(probabilities.range, 12), direction: 'Range', rr: '区间观察', trigger: levels.valid ? '价格继续贴近VWAP横向运行' : noLevelsText, target: levels.valid ? `${lower} - ${upper}` : noLevelsText, response: '只看边界，不追单。', invalidation: '收盘突破区间并回踩确认', canTrade: false },
+      { label: 'C 破位路径', probability: 'breakout', probabilityValue: Math.max(probabilities.bearish - 8, 8), direction: 'Short', rr: rrLabel(breakoutShortRR), trigger: levels.support ? `跌破${lower}后反抽不回` : noLevelsText, target: levels.sellLiquidity ? `下方Sell Side Liquidity ${round(levels.sellLiquidity)}` : '下方空间待确认', response: '跌破后等反抽确认。', invalidation: '跌破后快速收回区间', canTrade: false },
+      { label: 'D 极端路径', probability: 'extreme', probabilityValue: probabilities.reversal, direction: 'Long', rr: rrLabel(longRR), trigger: hasExtremeTrigger ? `扫低/反向结构确认后重新站回${lower}上方并转强` : '未出现扫流动性/CHoCH/强反向BOS，仅观察', target: levels.resistance ? upper : noLevelsText, response: '只作为反向条件路径。', invalidation: '重新跌破扫低位', canTrade: canExtremeTrade && (longRR ?? 0) >= 1.5 },
     ];
   }
   return [
-    { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.range, trigger: '价格维持在支撑压力之间', target: `${lower} - ${upper}`, response: '区间边界确认，区间中部不动。', invalidation: '有效突破任一边界' },
-    { label: 'B 次路径', probability: 'secondary', probabilityValue: probabilities.bullish, trigger: `突破${upper}并回踩确认`, target: '上方流动性', response: '确认后跟随，不提前猜方向。', invalidation: '突破后跌回区间' },
-    { label: 'C 破位延续', probability: 'breakout', probabilityValue: probabilities.bearish, trigger: `跌破${lower}并反抽确认`, target: '下方流动性', response: '确认后跟随，不追第一根。', invalidation: '跌破后收回区间' },
-    { label: 'D 极端反转', probability: 'extreme', probabilityValue: probabilities.reversal, trigger: '先扫一侧流动性，再快速反向收回', target: '回到区间另一侧', response: '只在扫流动性后做反向确认。', invalidation: '扫后不回区间' },
+    { label: 'A 主路径', probability: 'primary', probabilityValue: probabilities.range, direction: 'Range', rr: '区间观察', trigger: levels.valid ? '价格维持在支撑压力之间' : noLevelsText, target: levels.valid ? `${lower} - ${upper}` : noLevelsText, response: '区间边界确认，中部不动。', invalidation: '有效突破任一边界', canTrade: false },
+    { label: 'B 备选路径', probability: 'secondary', probabilityValue: probabilities.bullish, direction: 'Long', rr: rrLabel(breakoutLongRR), trigger: levels.resistance ? `突破${upper}并回踩确认` : noLevelsText, target: levels.buyLiquidity ? `上方流动性 ${round(levels.buyLiquidity)}` : '上方空间待确认', response: '确认后跟随，不提前猜方向。', invalidation: '突破后跌回区间', canTrade: false },
+    { label: 'C 破位路径', probability: 'breakout', probabilityValue: probabilities.bearish, direction: 'Short', rr: rrLabel(breakoutShortRR), trigger: levels.support ? `跌破${lower}并反抽确认` : noLevelsText, target: levels.sellLiquidity ? `下方流动性 ${round(levels.sellLiquidity)}` : '下方空间待确认', response: '确认后跟随，不追第一根。', invalidation: '跌破后收回区间', canTrade: false },
+    { label: 'D 极端路径', probability: 'extreme', probabilityValue: probabilities.reversal, direction: hasExtremeTrigger ? 'Long' : 'Wait', rr: rrLabel(hasExtremeTrigger ? longRR : null), trigger: hasExtremeTrigger ? '先扫一侧流动性或出现反向结构，再快速反向收回' : '未出现扫流动性/CHoCH/强反向BOS，仅观察', target: '回到区间另一侧', response: '只在扫流动性后做反向确认。', invalidation: '扫后不回区间', canTrade: canExtremeTrade && (longRR ?? 0) >= 1.5 },
   ];
 }
 
@@ -306,7 +455,7 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
   const fvg = detectFVG(candles);
   const liq = detectLiquidity(candles, swings);
   const swept = detectSweep(candles, liq);
-  const sr = detectSR(swings);
+  const levels = buildLevelContext(candles, swings, fvg, liq, atr);
   const zone = detectZone(candles, swings);
   const swTrend = swingTrend(swings);
   const signal = trendSignal(candles, ema20, ema50);
@@ -351,10 +500,8 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
   if (swept) raw.reversal += 12;
   if (conflict) raw.range += 15;
 
-  const probabilities = normalizeScores(raw);
-  let bias: Bias = 'neutral';
-  if (probabilities.bullish > probabilities.bearish + 10 && probabilities.bullish > probabilities.range) bias = 'bullish';
-  else if (probabilities.bearish > probabilities.bullish + 10 && probabilities.bearish > probabilities.range) bias = 'bearish';
+  const probabilities = normalizeScores(capExtreme(normalizeScores(raw), swept, choch));
+  const bias = resolveBias(probabilities, trend4H, trend1H, conflict);
 
   const top = Math.max(probabilities.bullish, probabilities.bearish, probabilities.range);
   const confidence: Confidence = top >= 45 ? 'high' : top >= 34 ? 'medium' : 'low';
@@ -368,50 +515,52 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
   else if (bias === 'neutral') state = 'ranging';
   else state = 'pullback';
 
-  const tradeable = confidence !== 'low' && scoreGap >= 10 && !conflict && zone !== 'mid';
-  const marketBiasText = bias === 'bullish' ? '偏多' : bias === 'bearish' ? '偏空' : '震荡/等待确认';
-  const tradeSuitability = tradeable ? '适合等待关键位确认' : '不适合直接入场';
-  const bestOpportunity =
-    bias === 'bullish'
-      ? '回踩支撑或多头FVG后看确认'
-      : bias === 'bearish'
-        ? '反抽压力或空头FVG后看确认'
-        : '等待价格到区间边界';
+  const blockReasons = [
+    conflict ? '4H/1H方向冲突' : '',
+    scoreGap < 8 ? '多空分差不足' : '',
+    levels.position === 'middle' ? '价格在区间中部' : '',
+    confidence === 'low' ? '结构置信度偏低' : '',
+    !levels.valid ? '暂无有效关键位' : '',
+  ].filter(Boolean);
+  const blocked = blockReasons.length > 0;
+  const scenarios = buildScenarios(bias, levels, price, atr, probabilities, blocked, zone, swept, choch, bos);
+  const primaryPath = scenarios[0];
+  const consistencyIssue = validateConsistency(probabilities, bias, primaryPath.direction);
+  const finalBlockReasons = consistencyIssue ? [...blockReasons, '方向信号不一致，暂不建议交易'] : blockReasons;
+  const tradeable = primaryPath.canTrade && confidence !== 'low' && !consistencyIssue;
+  const marketBiasText =
+    consistencyIssue ? '震荡/等待确认' :
+      bias === 'bullish' ? (scoreGap > 15 ? '明确偏多' : '轻微偏多') :
+      bias === 'bearish' ? (scoreGap > 15 ? '明确偏空' : '轻微偏空') :
+        '震荡/等待确认';
+  const tradeSuitability = tradeable ? '适合等待路径触发' : `不适合直接入场：${finalBlockReasons[0] || '等待触发'}`;
+  const bestOpportunity = primaryPath.canTrade ? primaryPath.trigger : `等待：${primaryPath.trigger}`;
 
   const decision =
-    tradeable && bias === 'bullish'
-      ? '只看多，等待回踩确认'
-      : tradeable && bias === 'bearish'
-        ? '只看空，等待反抽确认'
+    tradeable && primaryPath.direction === 'Long'
+      ? '路径A偏多，等待回踩确认'
+      : tradeable && primaryPath.direction === 'Short'
+        ? '路径A偏空，等待反抽确认'
         : conflict
           ? '多周期冲突，只观察'
-          : '等待确认，当前位置不适合入场';
+          : '等待路径触发，当前位置不追单';
 
   const reason =
     `4H ${snapshots[0].structure}，1H ${snapshots[1].structure}，15M ${snapshots[2].structure}。` +
-    ` 当前价格位于${zone === 'premium' ? 'Premium' : zone === 'discount' ? 'Discount' : 'Mid-range'}，` +
-    `RSI ${lastRsi.toFixed(0)}，${swept ? '刚出现扫流动性迹象。' : '暂无明确扫流动性确认。'}`;
+    ` 价格在${zone === 'premium' ? 'Premium' : zone === 'discount' ? 'Discount' : 'Mid-range'}，` +
+    `RSI ${lastRsi.toFixed(0)}，主路径为${primaryPath.label}。`;
 
-  const trigger =
-    bias === 'bullish'
-      ? `回踩${round(sr.support)}附近不破，并出现5M bullish BOS/CHoCH。`
-      : bias === 'bearish'
-        ? `反抽${round(sr.resistance)}附近受压，并出现5M bearish BOS/CHoCH。`
-        : '等待突破区间后回踩确认，或到达区间边界出现拒绝K线。';
+  const trigger = primaryPath.trigger;
 
-  const invalidation =
-    bias === 'bullish'
-      ? `跌破${round(sr.support)}并收盘在下方，多头结构失效。`
-      : bias === 'bearish'
-        ? `突破${round(sr.resistance)}并收盘在上方，空头结构失效。`
-        : '价格有效突破区间并回踩确认，震荡判断失效。';
+  const invalidation = primaryPath.invalidation;
 
-  const tradePlans = buildTradePlans(bias, price, sr.support, sr.resistance, atr, probabilities, conflict || scoreGap < 10, zone);
-  const scenarios = buildScenarios(bias, sr.support, sr.resistance, probabilities);
+  const tradePlans = buildTradePlans(scenarios.map(s => consistencyIssue ? { ...s, canTrade: false } : s), price, levels, atr, probabilities, finalBlockReasons.join('；') || primaryPath.invalidation, zone);
   const riskLevel = tradeable ? (confidence === 'high' ? 'low' : 'medium') : 'high';
   const finalConclusion =
-    `${marketBiasText}。关键确认位：${bias === 'bullish' ? round(sr.support) : bias === 'bearish' ? round(sr.resistance) : `${round(sr.support)} / ${round(sr.resistance)}`}。` +
-    `关键失效位：${invalidation} 优先策略：${tradeable ? bestOpportunity : '等待结构确认，不追单。'}`;
+    `当前${marketBiasText}，主看${primaryPath.label}。` +
+    `最值得关注：${primaryPath.trigger}。` +
+    `失效：${primaryPath.invalidation}。` +
+    `${tradeable ? '可以等待触发，不追第一根。' : '当前位置不适合直接入场。'}`;
 
   return {
     currentPrice: price,
@@ -435,8 +584,8 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
       trend: s.trend,
       bos: s.bos,
       choch: s.choch,
-      resistance: s.resistance,
-      support: s.support,
+      resistance: s.key === '15m' ? levels.resistance : s.resistance,
+      support: s.key === '15m' ? levels.support : s.support,
       summary: s.summary,
     })),
     bos,
@@ -446,8 +595,8 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
     swings,
     fvgZones: fvg,
     liquidity: liq,
-    support: sr.support,
-    resistance: sr.resistance,
+    support: levels.support,
+    resistance: levels.resistance,
     decision,
     reason,
     trigger,
@@ -457,15 +606,16 @@ export function analyze(candles: Candle[], timeframes: TimeframeCandles = {}): M
     tradePlans,
     finalConclusion,
     futureOutlook: [
-      bias === 'bullish' ? '若回踩不破支撑，多头更容易延续到上方流动性。' : bias === 'bearish' ? '若反抽不过压力，空头更容易延续到下方流动性。' : '若继续卡在中位区，交易优势会很低。',
-      '突破后没有回踩确认，仍按高风险处理。',
-      '若先扫一侧流动性再快速收回，优先观察反向结构确认。',
+      `${scenarios[0].label}：${scenarios[0].trigger}，目标${scenarios[0].target}。`,
+      `${scenarios[1].label}：${scenarios[1].trigger}，目标${scenarios[1].target}。`,
+      `${scenarios[2].label}：${scenarios[2].trigger}，目标${scenarios[2].target}。`,
     ],
     riskNotes: [
-      '多空分差小于10%，不建议交易。',
-      '价格在区间中部，不建议交易。',
-      '多周期冲突，只输出观察计划。',
-      'RR不足1:1.5，不生成明确交易计划。',
+      finalBlockReasons[0] || '等待路径触发，不追单。',
+      consistencyIssue || `关键位校验：压力${levels.resistance ? `在现价上方 ${round(levels.resistance)} (${levels.resistanceSource})` : '暂无有效'}，支撑${levels.support ? `在现价下方 ${round(levels.support)} (${levels.supportSource})` : '暂无有效'}。`,
+      '路径C必须等突破后回踩/反抽确认。',
+      '路径D必须等扫流动性后反向确认。',
+      'RR不足1:1.5，不生成明确Entry。',
       '所有结论仅作行情结构分析，不构成投资建议。',
     ],
   };

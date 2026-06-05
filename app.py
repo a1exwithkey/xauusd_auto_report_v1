@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +23,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 ENV_FILES = (ROOT / ".env", ROOT.parent / ".env")
 TWELVE_TIMEOUT_SECONDS = 8
-GEMINI_TIMEOUT_SECONDS = 8
+GEMINI_TIMEOUT_SECONDS = 18
 
 CANDIDATES: list[Path] = [
     ROOT / "xauusd_dashboard" / "dist",
@@ -379,7 +380,7 @@ def _fetch_gemini_analysis(payload: dict, gemini_key: str, cache_key: str) -> tu
     if not gemini_key:
         return None, "缺少 GEMINI_API_KEY，当前只显示行情数据和基础指标。"
 
-    model = os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.5-flash"
+    model = os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.5-flash-lite"
     url_model = urllib.parse.quote(model, safe="")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{url_model}:generateContent?key={urllib.parse.quote(gemini_key)}"
     body = {
@@ -388,6 +389,7 @@ def _fetch_gemini_analysis(payload: dict, gemini_key: str, cache_key: str) -> tu
             "temperature": 0.25,
             "responseMimeType": "application/json",
             "responseSchema": _analysis_schema(),
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     req = urllib.request.Request(
@@ -396,14 +398,22 @@ def _fetch_gemini_analysis(payload: dict, gemini_key: str, cache_key: str) -> tu
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT_SECONDS) as resp:
-            raw = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="ignore")[:500]
-        return None, f"Gemini request failed: HTTP {exc.code} {detail}"
-    except Exception as exc:
-        return None, f"Gemini request failed: {exc}"
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=GEMINI_TIMEOUT_SECONDS) as resp:
+                raw = json.loads(resp.read().decode("utf-8"))
+                break
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")[:500]
+            if exc.code in (429, 500, 502, 503, 504) and attempt == 0:
+                time.sleep(1.2)
+                continue
+            return None, f"Gemini request failed: HTTP {exc.code} {detail}"
+        except Exception as exc:
+            if attempt == 0:
+                time.sleep(1.2)
+                continue
+            return None, f"Gemini request failed: {exc}"
 
     try:
         text = raw["candidates"][0]["content"]["parts"][0]["text"]

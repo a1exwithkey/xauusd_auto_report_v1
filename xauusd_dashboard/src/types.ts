@@ -65,6 +65,8 @@ export type TimeframeStructure = {
   choch: string;
   resistance: number | null;
   support: number | null;
+  resistanceText?: string;
+  supportText?: string;
   summary: string;
 };
 
@@ -119,6 +121,9 @@ export type MarketAnalysis = {
   finalConclusion: string;
   futureOutlook: string[];
   riskNotes: string[];
+  aiAnalysis?: AIAnalysisJSON;
+  aiError?: string;
+  analysisSource?: 'gemini' | 'local';
 };
 
 export type Scenario = {
@@ -132,4 +137,80 @@ export type Scenario = {
   response: string;
   invalidation: string;
   canTrade: boolean;
+};
+
+export type AIAnalysisJSON = {
+  _meta?: {
+    model?: string;
+    generated_at?: string;
+    source?: string;
+  };
+  market_overview: {
+    current_price: number | null;
+    price_change: string;
+    market_bias: string;
+    best_opportunity: string;
+    trade_suitability: string;
+    summary: string;
+  };
+  multi_timeframe_structure: Array<{
+    timeframe: string;
+    trend: string;
+    key_support: string;
+    key_resistance: string;
+    structure_notes: string;
+    conclusion: string;
+  }>;
+  key_levels_and_liquidity: {
+    high_rejection_zone: string;
+    key_resistance_zone: string;
+    short_term_pressure: string;
+    key_support_zone: string;
+    buy_side_liquidity: string;
+    sell_side_liquidity: string;
+    stop_hunt_area: string;
+    most_likely_sweep: string;
+  };
+  probability_view: {
+    bullish_probability: number | null;
+    bearish_probability: number | null;
+    range_probability: number | null;
+    reversal_probability: number | null;
+    explanation: string;
+  };
+  scenarios: Array<{
+    path: string;
+    name: string;
+    probability: number | null;
+    direction: string;
+    trigger: string;
+    target: string;
+    invalidation: string;
+    response: string;
+  }>;
+  trade_plans: Array<{
+    linked_path: string;
+    direction: string;
+    entry: string;
+    sl: string;
+    tp1: string;
+    tp2: string;
+    tp3: string;
+    rr: string;
+    confidence: string;
+    invalidation: string;
+    note: string;
+  }>;
+  risk_control: {
+    no_trade_conditions: string[];
+    main_risks: string[];
+    invalidation_summary: string;
+  };
+  final_conclusion: {
+    main_direction: string;
+    best_action_now: string;
+    key_area_to_wait_for: string;
+    dangerous_area: string;
+    conclusion_text: string;
+  };
 };

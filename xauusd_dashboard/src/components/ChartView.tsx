@@ -47,6 +47,7 @@ export function ChartView({ candles, analysis }: Props) {
     const w = Math.max(container.clientWidth, 400);
     const last = candles[candles.length - 1];
     const prev = candles[candles.length - 2];
+    const canShowAiStructure = analysis.analysisSource === 'gemini';
     const lastPriceColor = prev && last.close >= prev.close ? '#22c55e' : '#ef4444';
     const visibleBars = w < 700 ? Math.min(rangeBars, MOBILE_VISIBLE_BARS) : rangeBars;
     const visibleFrom = Math.max(0, candles.length - visibleBars);
@@ -169,7 +170,7 @@ export function ChartView({ candles, analysis }: Props) {
     }
 
     // Swing markers
-    if (showSwings) {
+    if (canShowAiStructure && showSwings) {
       createSeriesMarkers(candleSeries,
         analysis.swings.filter(s => s.time >= visibleStartTime).slice(-10).map(s => ({
           time: s.time as any,
@@ -183,13 +184,13 @@ export function ChartView({ candles, analysis }: Props) {
     }
 
     // Support / Resistance
-    if (analysis.support) {
+    if (canShowAiStructure && analysis.support) {
       candleSeries.createPriceLine({
         price: analysis.support, color: 'rgba(34,197,94,0.85)', lineWidth: 1,
         lineStyle: 2, axisLabelVisible: true, title: '关键支撑',
       });
     }
-    if (analysis.resistance) {
+    if (canShowAiStructure && analysis.resistance) {
       candleSeries.createPriceLine({
         price: analysis.resistance, color: 'rgba(239,68,68,0.85)', lineWidth: 1,
         lineStyle: 2, axisLabelVisible: true, title: '关键压力',
@@ -197,7 +198,7 @@ export function ChartView({ candles, analysis }: Props) {
     }
 
     // Liquidity lines
-    if (showLiquidity) {
+    if (canShowAiStructure && showLiquidity) {
       for (const liq of analysis.liquidity.slice(0, 3)) {
         candleSeries.createPriceLine({
           price: liq.price,
@@ -209,7 +210,7 @@ export function ChartView({ candles, analysis }: Props) {
     }
 
     // FVG lines
-    if (showFVG) {
+    if (canShowAiStructure && showFVG) {
       for (const fvg of analysis.fvgZones.slice(-3)) {
         const clr = fvg.type === 'bullish' ? 'rgba(34,197,94,0.42)' : 'rgba(239,68,68,0.42)';
         const label = fvg.type === 'bullish' ? 'Bull FVG' : 'Bear FVG';
@@ -236,6 +237,8 @@ export function ChartView({ candles, analysis }: Props) {
       chartRef.current = null;
     };
   }, [mounted, candles, analysis, rangeBars, showEMA610, showFVG, showLiquidity, showSwings, showVWAP]);
+
+  const canShowAiStructure = analysis?.analysisSource === 'gemini';
 
   return (
     <section className="bg-surface-card border border-gold/25 rounded-lg shadow-[0_0_28px_rgba(0,0,0,.24)]" style={{ width: '100%', overflow: 'visible' }}>
@@ -267,9 +270,17 @@ export function ChartView({ candles, analysis }: Props) {
 
           <ToggleButton label="VWAP" active={showVWAP} onClick={() => setShowVWAP(v => !v)} />
           <ToggleButton label="EMA610" active={showEMA610} onClick={() => setShowEMA610(v => !v)} />
-          <ToggleButton label="Swing" active={showSwings} onClick={() => setShowSwings(v => !v)} />
-          <ToggleButton label="Liquidity" active={showLiquidity} onClick={() => setShowLiquidity(v => !v)} />
-          <ToggleButton label="FVG" active={showFVG} onClick={() => setShowFVG(v => !v)} />
+          {canShowAiStructure ? (
+            <>
+              <ToggleButton label="Swing" active={showSwings} onClick={() => setShowSwings(v => !v)} />
+              <ToggleButton label="Liquidity" active={showLiquidity} onClick={() => setShowLiquidity(v => !v)} />
+              <ToggleButton label="FVG" active={showFVG} onClick={() => setShowFVG(v => !v)} />
+            </>
+          ) : (
+            <span className="text-[11px] text-text-muted px-2 py-1 border border-surface-border rounded-md bg-[#0d131d]">
+              SMC 标记等待 Gemini
+            </span>
+          )}
         </div>
       </div>
       {!mounted ? (

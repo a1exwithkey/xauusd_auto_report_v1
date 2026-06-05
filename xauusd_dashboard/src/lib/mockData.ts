@@ -1,4 +1,4 @@
-import { Candle, TimeframeCandles } from '../types';
+import { AIAnalysisJSON, Candle, TimeframeCandles } from '../types';
 
 type RealPayload = {
   ticker: string;
@@ -38,6 +38,16 @@ export function dataError(): string {
     return String((window as any).__XAUUSD_DATA_ERROR__ || '');
   } catch (_) {
     return '';
+  }
+}
+
+export function getAiAnalysis(): { analysis: AIAnalysisJSON | null; error: string } {
+  try {
+    const analysis = (window as any).__XAUUSD_AI_ANALYSIS__ as AIAnalysisJSON | null;
+    const error = String((window as any).__XAUUSD_AI_ERROR__ || '');
+    return { analysis: analysis?.market_overview ? analysis : null, error };
+  } catch (_) {
+    return { analysis: null, error: '' };
   }
 }
 

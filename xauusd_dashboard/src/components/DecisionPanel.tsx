@@ -23,6 +23,22 @@ export function DecisionPanel({ analysis }: Props) {
     );
   }
 
+  if (analysis.analysisSource !== 'gemini') {
+    return (
+      <aside className="space-y-3">
+        <section className="bg-surface-card border border-warn/30 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-warn mb-3">交易决策</h3>
+          <div className="text-lg font-bold mb-2 text-warn">等待 Gemini 分析</div>
+          <p className="text-sm text-text-secondary leading-relaxed">
+            当前只展示 Twelve Data 行情和本地基础结构，不生成交易建议、路径计划或 Entry / SL / TP。
+          </p>
+        </section>
+        <KeyLevelsCard analysis={analysis} />
+        <RiskBlock />
+      </aside>
+    );
+  }
+
   return (
     <aside className="space-y-3">
       <DecisionCard analysis={analysis} />
@@ -53,6 +69,18 @@ export function TradePlansPanel({ plans }: { plans: TradePlan[] }) {
         {plans.map((plan) => (
           <TradePlanCard key={plan.name} plan={plan} />
         ))}
+      </div>
+    </section>
+  );
+}
+
+export function AwaitingGeminiPanel({ title, description }: { title: string; description: string }) {
+  return (
+    <section className="bg-surface-card border border-warn/25 rounded-lg p-4">
+      <h3 className="text-sm font-semibold text-warn mb-3">{title}</h3>
+      <p className="text-sm text-text-secondary leading-relaxed">{description}</p>
+      <div className="mt-3 rounded-md border border-surface-border bg-[#0d131d] px-3 py-2 text-xs text-text-muted">
+        行情数据来自 Twelve Data；该模块必须等 Gemini 返回后才填充，避免把基础规则误当作交易建议。
       </div>
     </section>
   );
@@ -96,31 +124,49 @@ function DecisionCard({ analysis }: { analysis: MarketAnalysis | null }) {
 }
 
 export function KeyLevelsCard({ analysis }: { analysis: MarketAnalysis }) {
+  const aiLevels = analysis.aiAnalysis?.key_levels_and_liquidity;
+  if (aiLevels) {
+    const rows = [
+      ['高位拒绝区', aiLevels.high_rejection_zone, 'text-bear'],
+      ['关键压力区', aiLevels.key_resistance_zone, 'text-bear'],
+      ['短线反抽压力', aiLevels.short_term_pressure, 'text-warn'],
+      ['关键支撑区', aiLevels.key_support_zone, 'text-bull'],
+      ['Buy Side Liquidity', aiLevels.buy_side_liquidity, 'text-warn'],
+      ['Sell Side Liquidity', aiLevels.sell_side_liquidity, 'text-[#60a5fa]'],
+      ['Stop Hunt 区域', aiLevels.stop_hunt_area, 'text-purple-300'],
+      ['最可能扫荡位置', aiLevels.most_likely_sweep, 'text-gold'],
+    ];
+    return (
+      <section className="bg-surface-card border border-surface-border rounded-lg p-4">
+        <h3 className="text-sm font-semibold text-gold mb-3">关键价位与流动性</h3>
+        <div className="space-y-2 text-sm">
+          {rows.map(([label, value, color]) => (
+            <TextLevelRow key={label} label={label} value={value} color={color} />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="bg-surface-card border border-surface-border rounded-lg p-4">
       <h3 className="text-sm font-semibold text-gold mb-3">关键价位与流动性</h3>
-      <div className="space-y-2 text-sm">
-        <LevelRow label="关键压力" price={analysis.resistance} color="text-bear" />
-        <LevelRow label="关键支撑" price={analysis.support} color="text-bull" />
-        {analysis.liquidity.slice(0, 4).map((l, i) => (
-          <LevelRow
-            key={`${l.type}-${i}`}
-            label={l.type === 'buy_side' ? 'Buy Side Liquidity' : 'Sell Side Liquidity'}
-            price={l.price}
-            color={l.type === 'buy_side' ? 'text-warn' : 'text-[#60a5fa]'}
-            detail={`${l.touches}次触碰 · ${sourceLabel(l.source)}`}
-          />
-        ))}
-        {analysis.fvgZones.slice(-3).map((f, i) => (
-          <div key={i} className="flex justify-between items-center py-1 border-b border-surface-border last:border-0">
-            <span className="text-text-muted text-xs">{f.type === 'bullish' ? 'Demand FVG' : 'Supply FVG'}</span>
-            <span className={`font-mono text-xs ${f.type === 'bullish' ? 'text-bull' : 'text-bear'}`}>
-              {f.bottom.toFixed(2)} - {f.top.toFixed(2)}
-            </span>
-          </div>
-        ))}
+      <div className="rounded-md border border-warn/25 bg-warn/5 p-3">
+        <div className="text-sm font-bold text-warn mb-2">等待 Gemini 分析</div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          压力、支撑、流动性、FVG、扫盘和交易关键区属于分析层；Gemini 未返回前不展示本地规则结果。
+        </p>
       </div>
     </section>
+  );
+}
+
+function TextLevelRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="flex justify-between items-start gap-3 py-1.5 border-b border-surface-border last:border-0">
+      <span className="text-text-muted text-xs shrink-0">{label}</span>
+      <span className={`text-xs text-right leading-relaxed ${color}`}>{value || '不知道'}</span>
+    </div>
   );
 }
 
@@ -202,17 +248,6 @@ function KV({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LevelRow({ label, price, color, detail }: { label: string; price: number | null; color: string; detail?: string }) {
-  return (
-    <div className="flex justify-between items-center py-1 border-b border-surface-border last:border-0">
-      <span className="text-text-muted text-xs">{label}</span>
-      <div className="text-right">
-        <div className={`font-mono text-xs font-semibold ${color}`}>{price?.toFixed(2) ?? '待确认'}</div>
-        {detail && <div className="text-xs text-text-muted">{detail}</div>}
-      </div>
-    </div>
-  );
-}
 
 function RiskBlock() {
   return (
@@ -228,15 +263,4 @@ function RiskBlock() {
       </ul>
     </section>
   );
-}
-
-function sourceLabel(source: string): string {
-  return {
-    equal_highs: 'Equal High',
-    equal_lows: 'Equal Low',
-    prior_high: '前高',
-    prior_low: '前低',
-    day_high: '日高',
-    day_low: '日低',
-  }[source] ?? source;
 }

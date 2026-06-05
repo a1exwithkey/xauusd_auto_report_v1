@@ -503,6 +503,41 @@ def _refresh_cache_key() -> str:
     return str(int(datetime.now(timezone.utc).timestamp() // 3600))
 
 
+def _should_generate_ai() -> bool:
+    return bool(str(st.query_params.get("generate_ai", "")).strip())
+
+
+def _cached_ai_for_payload(payload: dict) -> tuple[dict | None, str]:
+    cached = st.session_state.get("xauusd_ai_analysis")
+    if not isinstance(cached, dict):
+        return None, "AI 分析尚未生成，请点击顶部“生成 AI 分析”。"
+
+    analysis = cached.get("analysis")
+    source_close = cached.get("latest_close")
+    current_close = payload.get("latest_close")
+    if not analysis:
+        return None, "AI 分析尚未生成，请点击顶部“生成 AI 分析”。"
+
+    try:
+        if source_close and current_close:
+            change = abs(float(current_close) - float(source_close)) / max(float(source_close), 1)
+            if change > 0.003:
+                return None, "行情较上次 AI 分析已明显变化，请重新生成 AI 分析。"
+    except Exception:
+        pass
+
+    return analysis, ""
+
+
+def _store_ai_analysis(payload: dict, analysis: dict) -> None:
+    st.session_state["xauusd_ai_analysis"] = {
+        "analysis": analysis,
+        "latest_close": payload.get("latest_close"),
+        "latest_time": payload.get("latest_time"),
+        "stored_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @st.fragment(run_every="1h")
 def _render_dashboard() -> None:
     folder = _find_build()
@@ -525,10 +560,17 @@ def _render_dashboard() -> None:
     if not api_key:
         inject = _make_data_script(None, "缺少 TWELVE_DATA_API_KEY，无法获取实时 XAUUSD 行情。请在环境变量或 Streamlit Secrets 中配置。")
     else:
+        if str(st.query_params.get("force_refresh", "")).strip():
+            st.session_state.pop("xauusd_ai_analysis", None)
+
         real, error = _fetch_from_twelvedata(api_key, _refresh_cache_key())
         ai_analysis, ai_error = (None, "")
         if real:
-            ai_analysis, ai_error = _fetch_gemini_analysis(real, _get_gemini_key(), _refresh_cache_key())
+            ai_analysis, ai_error = _cached_ai_for_payload(real)
+            if _should_generate_ai():
+                ai_analysis, ai_error = _fetch_gemini_analysis(real, _get_gemini_key(), str(st.query_params.get("generate_ai", "")))
+                if ai_analysis:
+                    _store_ai_analysis(real, ai_analysis)
         inject = _make_data_script(real, error, ai_analysis, ai_error)
 
     html = HTML_TPL.replace("__REAL_DATA_SCRIPT__", inject)
@@ -546,38 +588,8 @@ def main() -> None:
     <style>
       .stApp{background:#0a0e14}
       .block-container{padding:62px 0 0!important;max-width:100%!important}
-      div[data-testid="stButton"]{
-        position:fixed;
-        top:90px;
-        right:18px;
-        z-index:9999;
-        width:auto!important;
-      }
-      div[data-testid="stButton"] button{
-        background:rgba(212,175,55,.16);
-        color:#f4d06f;
-        border:1px solid rgba(212,175,55,.48);
-        border-radius:7px;
-        min-height:30px;
-        padding:0 12px;
-        font-size:12px;
-        font-weight:800;
-        letter-spacing:0;
-        box-shadow:0 8px 20px rgba(0,0,0,.24);
-      }
-      div[data-testid="stButton"] button:hover{
-        background:rgba(212,175,55,.28);
-        border-color:rgba(244,208,111,.86);
-        color:#ffe28a;
-      }
-      div[data-testid="stButton"] button p{font-size:12px}
     </style>
     """, unsafe_allow_html=True)
-
-    if st.button("刷新", type="secondary", help="清除缓存并重新请求 Twelve Data"):
-        _fetch_from_twelvedata.clear()
-        st.query_params["force_refresh"] = str(int(datetime.now(timezone.utc).timestamp()))
-        st.rerun()
 
     _render_dashboard()
 

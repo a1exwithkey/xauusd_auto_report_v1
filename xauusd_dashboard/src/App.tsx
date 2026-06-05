@@ -70,7 +70,7 @@ export default function App() {
       {data.analysis?.analysisSource === 'local' && data.analysis.aiError && (
         <div className="mx-auto max-w-[1600px] px-3 mb-3">
           <div className="bg-warn/10 border border-warn/30 rounded-md px-3 py-2 text-xs text-warn">
-            Gemini 分析暂不可用：{data.analysis.aiError} 当前仅显示 Twelve Data 行情和基础技术指标，不生成结构判断或交易建议。
+            AI 分析状态：{data.analysis.aiError} 当前仅显示 Twelve Data 行情和基础技术指标，不生成结构判断或交易建议。
           </div>
         </div>
       )}

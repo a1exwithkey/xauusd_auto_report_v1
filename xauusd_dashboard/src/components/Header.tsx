@@ -61,9 +61,17 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource 
     error: 'bg-bear',
   }[status];
 
+  const refreshMarket = () => {
+    window.location.assign(`?force_refresh=${Date.now()}`);
+  };
+
+  const generateAi = () => {
+    window.location.assign(`?generate_ai=${Date.now()}`);
+  };
+
   return (
     <header className="bg-[#0b0f16] border-b border-gold/25 px-4 py-3 shadow-[0_10px_30px_rgba(0,0,0,.24)]">
-      <div className="mx-auto max-w-[1600px] flex flex-wrap items-center gap-x-6 gap-y-2 pr-24">
+      <div className="mx-auto max-w-[1600px] flex flex-wrap items-center gap-x-6 gap-y-2">
         {/* Title */}
         <div className="flex flex-col min-w-[260px]">
           <span className="text-gold font-bold text-lg tracking-tight">XAUUSD 黄金/美元 机构级交易分析报告</span>
@@ -109,6 +117,23 @@ export function Header({ analysis, status, lastRefresh, nextRefresh, dataSource 
 
           {/* Data source */}
           <span className="text-xs text-text-muted max-w-[220px] truncate">{dataSource}</span>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={refreshMarket}
+              className="h-8 px-3 rounded-md border border-gold/40 bg-gold/10 text-gold text-xs font-bold hover:bg-gold/20 transition-colors"
+            >
+              刷新行情
+            </button>
+            <button
+              type="button"
+              onClick={generateAi}
+              className="h-8 px-3 rounded-md border border-bull/35 bg-bull/10 text-bull text-xs font-bold hover:bg-bull/20 transition-colors"
+            >
+              生成 AI 分析
+            </button>
+          </div>
         </div>
       </div>
     </header>
